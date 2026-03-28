@@ -13,6 +13,7 @@ Vec-Eyes is not limited to spam. It is a reusable classification core for:
 - `FUZZING`
 - `WEB_ATTACK`
 - `FLOOD`
+- `FRAUD`
 - `PORN`
 - `RAW_DATA`
 - `BLOCK_LIST`

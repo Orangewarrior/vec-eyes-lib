@@ -320,7 +320,8 @@ let result = classifier.classify("input data");
 
 - `vec-eyes-lib` → core engine
 - `vec-eyes-cli` → interface layer
-
+- 
+https://github.com/Orangewarrior/vec-eyes-cli
 ---
 
 ## 🤝 Contributing

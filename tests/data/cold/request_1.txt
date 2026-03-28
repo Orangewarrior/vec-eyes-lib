@@ -1,0 +1,2 @@
+GET /products?page=2 HTTP/1.1
+Host: app.test

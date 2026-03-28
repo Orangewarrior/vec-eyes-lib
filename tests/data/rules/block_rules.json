@@ -1,0 +1,22 @@
+[
+  {
+    "title": "malicious-ip",
+    "description": "Known bad IP",
+    "match_rule": "(?:^|[^0-9])10\\.10\\.10\\.10(?:$|[^0-9])",
+    "score": 90,
+    "target_labels": [
+      "BLOCK_LIST",
+      "WEB_ATTACK"
+    ]
+  },
+  {
+    "title": "malicious-url",
+    "description": "Known bad URL",
+    "match_rule": "bad\\.example/m\\.exe",
+    "score": 100,
+    "target_labels": [
+      "BLOCK_LIST",
+      "MALWARE"
+    ]
+  }
+]

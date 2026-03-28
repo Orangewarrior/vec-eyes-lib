@@ -1,6 +1,6 @@
 # Vec-Eyes Core 🧠🔬
 
-> **High-performance behavior intelligence engine for Rust**
+**High-performance behavior intelligence engine for Rust**
 
 Vec-Eyes Core is a modular, high-performance behavior classification engine written in Rust, designed to power advanced detection systems across security, data science, and biological domains.
 
@@ -113,27 +113,110 @@ Vec-Eyes supports rule-based matching with scoring.
 
 ---
 
-## 📄 YAML Rules Engine
+## 🔥 YAML Pipeline (Advanced Examples)
 
-Vec-Eyes Core can be fully configured via YAML.
+Vec-Eyes allows full pipeline definition via YAML.
 
-### Example:
+---
+
+## 📄 Example 1 — KNN + FastText (Security / Spam)
 
 ```yaml
 method: KnnCosine
+nlp: FastText
 k: 5
 
+datasets:
+  hot:
+    - /data/email/spam/
+  cold:
+    - /data/email/normal/
+
 rules:
-  - title: Suspicious Keywords
-    description: Detect spam patterns
-    match_rule: "free|bonus|casino"
+  - title: Spam Keywords
+    description: Detect common spam words
+    match_rule: "free|bonus|win|casino"
     score: 70
 
-  - title: Known Malicious IP
-    match_rule: "192\.168\.1\.100"
-    score: 100
+  - title: Suspicious URL
+    match_rule: "http://.*(promo|deal)"
+    score: 80
 ```
 
+---
+
+## 📄 Example 2 — KNN + Word2Vec (Web Attack Detection)
+
+```yaml
+method: KnnEuclidean
+nlp: Word2Vec
+k: 3
+
+datasets:
+  hot:
+    - /data/http/attacks/
+  cold:
+    - /data/http/normal/
+
+rules:
+  - title: SQL Injection Pattern
+    match_rule: "union select|or 1=1"
+    score: 90
+
+  - title: XSS Attempt
+    match_rule: "<script>|alert\("
+    score: 85
+```
+
+---
+
+## 📄 Example 3 — Bayes + TF-IDF (Fraud Detection)
+
+```yaml
+method: Bayes
+nlp: TfIdf
+
+datasets:
+  hot:
+    - /data/fraud/transactions/
+  cold:
+    - /data/legit/transactions/
+
+rules:
+  - title: Suspicious Transaction
+    match_rule: "transfer|urgent|wire"
+    score: 60
+
+  - title: Known Fraud Pattern
+    match_rule: "offshore|crypto|anonymous"
+    score: 75
+```
+
+---
+
+## 📄 Example 4 — Biological Classification (FastText)
+
+```yaml
+method: KnnCosine
+nlp: FastText
+k: 4
+
+datasets:
+  hot:
+    - /data/bio/virus/
+    - /data/bio/bacteria/
+  cold:
+    - /data/bio/human/
+
+rules:
+  - title: Virus Signature
+    match_rule: "rna|mutation|viral"
+    score: 80
+
+  - title: Bacteria Pattern
+    match_rule: "bacteria|e.coli"
+    score: 70
+```
 ---
 
 ### 🧠 YAML Fields Explained
@@ -149,56 +232,24 @@ rules:
 | `score`      | Score (0–100) added to classification |
 
 ---
+---
 
-## 📄 YAML Example (Security)
+## 🧠 How Dataset Loading Works
 
-```yaml
-method: KnnCosine
-k: 5
-
-rules:
-  - title: SQL Injection
-    match_rule: "union select|or 1=1"
-    score: 90
-
-  - title: Suspicious Agent
-    match_rule: "sqlmap|nikto"
-    score: 80
-```
+- `hot` directories → labeled as target class
+- `cold` directories → baseline / normal behavior
+- All files are read **recursively**
+- Multiple directories supported
+- Each file contributes to training vectors
 
 ---
 
-## 📄 YAML Example (Biological)
+## ⚙️ Supported NLP Options
 
-```yaml
-method: KnnEuclidean
-k: 3
-
-rules:
-  - title: Virus Marker
-    match_rule: "rna|mutation|virus"
-    score: 85
-
-  - title: Bacteria Pattern
-    match_rule: "bacteria|e.coli"
-    score: 60
-```
-
----
-
-## 🏷️ Supported Labels
-
-SPAM, MALWARE, PHISHING, ANOMALY, WEB_ATTACK, FUZZING, FLOOD, FRAUD, BLOCK_LIST, RAW_DATA,  
-VIRUS, HUMAN, ANIMAL, CANCER, FUNGUS, BACTERIA
-
----
-
-## ⚡ Performance
-
-- Rust-native 🦀
-- ndarray + BLAS ready
-- Rayon parallelism
-- High-throughput design
+- Count
+- TfIdf
+- Word2Vec
+- FastText
 
 ---
 
@@ -219,6 +270,33 @@ sudo apt install libboost-all-dev cmake build-essential
 ```bash
 cargo build --features vectorscan
 ```
+
+---
+
+## ⚙️ Supported Methods
+
+- KnnCosine
+- KnnEuclidean
+- KnnManhattan
+- KnnMinkowski (requires `p`)
+- Bayes
+
+---
+
+## ⚠️ Validation Rules
+
+- KNN requires `k`
+- Minkowski requires `p`
+- Bayes does not require extra parameters
+- YAML is validated before execution
+
+---
+
+## ⚡ Performance
+
+- Rust-native
+- Rayon parallelism
+- ndarray + BLAS ready
 
 ---
 
@@ -257,21 +335,10 @@ We welcome contributions in:
 
 ---
 
-## 🧠 Vision
-
-Vec-Eyes aims to become:
-
-> **A unified behavior intelligence engine for security, data science, and biological pattern analysis**
-
----
-
 ## 👤 Author
 
 Orangewarrior
 
----
-
-## ⭐ Support the Project
 
 If you like Vec-Eyes:
 

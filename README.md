@@ -1,108 +1,280 @@
-# Vec-Eyes Library
+# Vec-Eyes Core 🧠🔬
 
-Vec-Eyes is a Rust library for behavior-oriented classification of raw text: mail buffers, HTTP requests, syscall traces, malware notes, anomaly descriptions, and rule-assisted detections.
+> **High-performance behavior intelligence engine for Rust**
 
-## Why contributors care
+Vec-Eyes Core is a modular, high-performance behavior classification engine written in Rust, designed to power advanced detection systems across security, data science, and biological domains.
 
-Vec-Eyes is not limited to spam. It is a reusable classification core for:
+It combines machine learning, NLP, vector embeddings, and rule-based matching into a unified engine for pattern detection and classification.
 
-- `SPAM`
-- `MALWARE`
-- `PHISHING`
-- `ANOMALY`
-- `FUZZING`
-- `WEB_ATTACK`
-- `FLOOD`
-- `FRAUD`
-- `PORN`
-- `RAW_DATA`
-- `BLOCK_LIST`
-- `VIRUS`
-- `HUMAN`
-- `ANIMAL`
-- `CANCER`
-- `FUNGUS`
-- `BACTERIA`
+---
 
-## Main capabilities
+## 🚀 What is Vec-Eyes Core?
 
-- pure Rust default build
-- optional native `vectorscan` backend behind a feature flag
-- regex fallback matcher for portable builds
-- Bayes support for `Count` and `TfIdf`
-- KNN support for `Word2Vec` and `FastText`
-- YAML validation for complete pipelines
-- mandatory `k` for all KNN runs
-- mandatory `p` for `KnnMinkowski`
-- report export in CSV and JSON
+Vec-Eyes Core is the **engine behind Vec-Eyes CLI**.
 
-## Build modes
+It provides:
 
-### Default build
+- 🧠 Machine Learning (KNN, Naive Bayes)
+- 🔡 NLP pipelines (Tokenization, TF-IDF, Embeddings)
+- ⚡ Vector similarity (Word2Vec, FastText)
+- 🔎 Rule engine (Regex / optional VectorScan)
+- 📊 Hybrid scoring system
 
-```bash
-cargo test
+---
+
+## 🎯 Use Cases
+
+### 🔐 Security & Threat Detection
+- Spam classification
+- Phishing detection
+- Web attack identification (SQLi, XSS, fuzzing)
+- Malware behavior analysis
+- Log anomaly detection
+
+### 💰 Fraud Detection
+- Transaction anomaly detection
+- Behavioral fraud patterns
+- Suspicious activity classification
+
+### 🧬 Biological & Scientific Analysis
+Vec-Eyes Core can be adapted for:
+
+- Virus pattern classification
+- Human / biological signal classification
+- Bacteria and fungus pattern detection
+- Biomedical text/log classification
+
+---
+
+## ⚙️ Core Architecture
+
+```
+Input Text / Data
+        ↓
+Normalization / Tokenization
+        ↓
+Feature Extraction (TF-IDF / Embeddings)
+        ↓
+ML Engine (KNN / Bayes)
+        ↓
+Rule Engine (Regex / VectorScan)
+        ↓
+Hybrid Scoring
+        ↓
+Final Classification
 ```
 
-### Native Vectorscan build
+---
 
-```bash
-cargo test --features vectorscan
+## 🧠 Machine Learning
+
+### ✔ KNN
+Supports:
+
+- Cosine similarity
+- Euclidean distance
+- Manhattan distance
+- Minkowski distance (requires `p`)
+
+Required parameters:
+
+- `k: usize`
+- `p: Option<f32>` (only for Minkowski)
+
+---
+
+### ✔ Naive Bayes
+
+- Count-based
+- TF-IDF-based
+- No mandatory hyperparameters
+
+---
+
+## 🔡 NLP Pipeline
+
+- Tokenization
+- Normalization
+- TF-IDF
+- Word2Vec (lightweight training)
+- FastText-style embeddings (subword support)
+
+---
+
+## 🔎 Rule Engine
+
+Vec-Eyes supports rule-based matching with scoring.
+
+### ✔ Default (no dependencies)
+- Regex-based matcher
+
+### ✔ Optional (feature flag)
+- VectorScan (Hyperscan fork for high-speed matching)
+
+---
+
+## 📄 YAML Rules Engine
+
+Vec-Eyes Core can be fully configured via YAML.
+
+### Example:
+
+```yaml
+method: KnnCosine
+k: 5
+
+rules:
+  - title: Suspicious Keywords
+    description: Detect spam patterns
+    match_rule: "free|bonus|casino"
+    score: 70
+
+  - title: Known Malicious IP
+    match_rule: "192\.168\.1\.100"
+    score: 100
 ```
 
-## System packages for native Vectorscan
+---
+
+### 🧠 YAML Fields Explained
+
+| Field        | Description |
+|-------------|------------|
+| `method`     | Classification method (`KnnCosine`, `KnnEuclidean`, `KnnManhattan`, `KnnMinkowski`, `Bayes`) |
+| `k`          | Required for KNN methods |
+| `p`          | Required only for Minkowski |
+| `title`      | Rule name (used in reports/logs) |
+| `description`| Optional explanation |
+| `match_rule` | Regex or pattern |
+| `score`      | Score (0–100) added to classification |
+
+---
+
+## 📄 YAML Example (Security)
+
+```yaml
+method: KnnCosine
+k: 5
+
+rules:
+  - title: SQL Injection
+    match_rule: "union select|or 1=1"
+    score: 90
+
+  - title: Suspicious Agent
+    match_rule: "sqlmap|nikto"
+    score: 80
+```
+
+---
+
+## 📄 YAML Example (Biological)
+
+```yaml
+method: KnnEuclidean
+k: 3
+
+rules:
+  - title: Virus Marker
+    match_rule: "rna|mutation|virus"
+    score: 85
+
+  - title: Bacteria Pattern
+    match_rule: "bacteria|e.coli"
+    score: 60
+```
+
+---
+
+## 🏷️ Supported Labels
+
+SPAM, MALWARE, PHISHING, ANOMALY, WEB_ATTACK, FUZZING, FLOOD, FRAUD, BLOCK_LIST, RAW_DATA,  
+VIRUS, HUMAN, ANIMAL, CANCER, FUNGUS, BACTERIA
+
+---
+
+## ⚡ Performance
+
+- Rust-native 🦀
+- ndarray + BLAS ready
+- Rayon parallelism
+- High-throughput design
+
+---
+
+## 🔧 Optional VectorScan Support
 
 ### Fedora
 
 ```bash
-sudo dnf install cmake gcc gcc-c++ boost-devel
+sudo dnf install boost-devel cmake gcc gcc-c++
 ```
 
 ### Debian / Ubuntu
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y build-essential cmake libboost-all-dev
+sudo apt install libboost-all-dev cmake build-essential
 ```
 
-## Example YAML pipeline
-
-```yaml
-report_name: Classification web attack
-method: KnnCosine
-nlp: FastText
-threads: 8
-csv_output: log.csv
-json_output: log.json
-recursive_way: On
-hot_test_path: test/http/attack/requests/
-cold_test_path: test/http/regular/requests/
-hot_label: WEB_ATTACK
-cold_label: RAW_DATA
-score_sum: On
-k: 5
-extra_match:
-  - recursive_way: On
-    engine: Regex
-    path: test/sql_injection/querys/
-    score_add_points: 15
-    title: sql-injection-indicators
-    description: Signature boost for SQL injection markers
+```bash
+cargo build --features vectorscan
 ```
 
-## Validation rules
+---
 
-- Bayes does not require `k` or `p`
-- every KNN method requires `k`
-- `KnnMinkowski` requires both `k` and `p`
+## 🧩 Embedding in Your Project
 
-## Design
+```rust
+use vec_eyes_core::*;
 
-- `ClassifierFactory` builds Bayes or KNN classifiers
-- `MatcherFactory` builds regex or optional Vectorscan matchers
-- `RulesFile` validates the pipeline before execution
-- `ClassificationReport` exports results for automation
+let classifier = build_classifier(...)
+    .with_method(MethodKind::KnnCosine { k: 5 })
+    .with_nlp(NlpOption::FastText)
+    .load_rules("rules.yaml")
+    .train(datasets)?;
 
-## More documentation
+let result = classifier.classify("input data");
+```
 
-See `../helper.md` for a full explanation of the YAML rule file and score-merging behavior.
+---
+
+## 🔗 Relationship with CLI
+
+- `vec-eyes-lib` → core engine
+- `vec-eyes-cli` → interface layer
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions in:
+
+- ML improvements
+- Performance optimization
+- Rule engine enhancements
+- Dataset integrations
+- Biological classification extensions
+
+---
+
+## 🧠 Vision
+
+Vec-Eyes aims to become:
+
+> **A unified behavior intelligence engine for security, data science, and biological pattern analysis**
+
+---
+
+## 👤 Author
+
+Orangewarrior
+
+---
+
+## ⭐ Support the Project
+
+If you like Vec-Eyes:
+
+- ⭐ Star the repo
+- 💡 Open issues
+- 🔧 Contribute

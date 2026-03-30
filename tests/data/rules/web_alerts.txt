@@ -1,0 +1,3 @@
+(?i)union\s+select
+(?i)<script>
+(?i)or\s+1=1

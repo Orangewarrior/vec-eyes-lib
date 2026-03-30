@@ -22,7 +22,7 @@ fn default_build_works_with_regex_fallback() {
 
     let rules_dir = tempdir().unwrap();
     let regex_path = rules_dir.path().join("rules.txt");
-    fs::write(&regex_path, "union\s+select
+    fs::write(&regex_path, r"union\s+select
 casino
 ").unwrap();
 

@@ -1,0 +1,10 @@
+report_name: Biology Bayes Count
+method: Bayes
+nlp: Count
+threads: 1
+recursive_way: On
+hot_test_path: tests/data/biology/hot
+cold_test_path: tests/data/biology/cold
+hot_label: VIRUS
+cold_label: HUMAN
+score_sum: Off

@@ -1,0 +1,8 @@
+- title: Virus Marker
+  description: Virus related tokens
+  match_rule: "rna|mutation|capsid"
+  score: 20
+- title: Pathogen Keyword
+  description: Pathogen indicator
+  match_rule: "pathogen|replication"
+  score: 10

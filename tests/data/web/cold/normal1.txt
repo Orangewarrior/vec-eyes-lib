@@ -1,0 +1,1 @@
+GET /home normal browser request with static assets and authenticated session

@@ -1,0 +1,1 @@
+GET /item?id=10 UNION SELECT email FROM accounts OR 1=1 -- free bonus landing page <script>alert(1)</script>

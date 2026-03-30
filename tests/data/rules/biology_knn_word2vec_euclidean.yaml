@@ -1,0 +1,18 @@
+report_name: Biology KNN Word2Vec
+method: KnnEuclidean
+nlp: Word2Vec
+threads: 2
+recursive_way: On
+hot_test_path: tests/data/biology/hot
+cold_test_path: tests/data/biology/cold
+hot_label: VIRUS
+cold_label: HUMAN
+score_sum: On
+k: 3
+extra_match:
+  - recursive_way: Off
+    engine: Regex
+    path: tests/data/rules/biology_alerts.yaml
+    score_add_points: 0
+    title: Biology rules
+    description: Regex rules for biological signals

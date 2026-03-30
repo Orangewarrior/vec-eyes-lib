@@ -1,0 +1,18 @@
+report_name: Web Attack KNN FastText
+method: KnnCosine
+nlp: FastText
+threads: 2
+recursive_way: On
+hot_test_path: tests/data/web/hot
+cold_test_path: tests/data/web/cold
+hot_label: WEB_ATTACK
+cold_label: RAW_DATA
+score_sum: On
+k: 3
+extra_match:
+  - recursive_way: Off
+    engine: Regex
+    path: tests/data/rules/web_alerts.txt
+    score_add_points: 20
+    title: Web attack rules
+    description: Regex rules inspired by public HTTP attack corpora

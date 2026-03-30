@@ -1,0 +1,10 @@
+report_name: Fraud Bayes TfIdf
+method: Bayes
+nlp: TfIdf
+threads: 1
+recursive_way: On
+hot_test_path: tests/data/fraud/hot
+cold_test_path: tests/data/fraud/cold
+hot_label: ANOMALY
+cold_label: RAW_DATA
+score_sum: Off

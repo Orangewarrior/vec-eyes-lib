@@ -323,6 +323,9 @@ let result = classifier.classify("input data");
 - 
 https://github.com/Orangewarrior/vec-eyes-cli
 ---
+## 🧪 Testing Guide
+
+https://github.com/Orangewarrior/vec-eyes-lib/wiki/%F0%9F%A7%AA-Testing-Guide
 
 ## 🤝 Contributing
 

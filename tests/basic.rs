@@ -68,6 +68,30 @@ fn yaml_pipeline_runs_and_exports_report() {
         extra_match: vec![],
         k: Some(3),
         p: None,
+        logistic_learning_rate: None,
+        logistic_epochs: None,
+        logistic_lambda: None,
+        random_forest_n_trees: None,
+        random_forest_mode: None,
+        random_forest_max_depth: None,
+        random_forest_max_features: None,
+        random_forest_min_samples_split: None,
+        random_forest_min_samples_leaf: None,
+        random_forest_bootstrap: None,
+        random_forest_oob_score: None,
+        svm_kernel: None,
+        svm_c: None,
+        svm_learning_rate: None,
+        svm_epochs: None,
+        svm_gamma: None,
+        svm_degree: None,
+        svm_coef0: None,
+        gradient_boosting_n_estimators: None,
+        gradient_boosting_learning_rate: None,
+        gradient_boosting_max_depth: None,
+        isolation_forest_n_trees: None,
+        isolation_forest_contamination: None,
+        isolation_forest_subsample_size: None,
     };
 
     let report = run_rules_pipeline(&rules_file, &classify_dir).unwrap();
@@ -92,7 +116,87 @@ fn yaml_validation_rejects_knn_without_k() {
         extra_match: vec![],
         k: None,
         p: None,
+        logistic_learning_rate: None,
+        logistic_epochs: None,
+        logistic_lambda: None,
+        random_forest_n_trees: None,
+        random_forest_mode: None,
+        random_forest_max_depth: None,
+        random_forest_max_features: None,
+        random_forest_min_samples_split: None,
+        random_forest_min_samples_leaf: None,
+        random_forest_bootstrap: None,
+        random_forest_oob_score: None,
+        svm_kernel: None,
+        svm_c: None,
+        svm_learning_rate: None,
+        svm_epochs: None,
+        svm_gamma: None,
+        svm_degree: None,
+        svm_coef0: None,
+        gradient_boosting_n_estimators: None,
+        gradient_boosting_learning_rate: None,
+        gradient_boosting_max_depth: None,
+        isolation_forest_n_trees: None,
+        isolation_forest_contamination: None,
+        isolation_forest_subsample_size: None,
     };
 
     assert!(rules_file.validate().is_err());
+}
+
+
+#[test]
+fn yaml_threads_field_is_validated_and_builds() -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let hot = root.join("tests/data/hot_attack");
+    let cold = root.join("tests/data/cold_regular");
+
+    let rules = RulesFile {
+        report_name: Some("Threads test".into()),
+        method: vec_eyes_lib::classifier::MethodKind::KnnCosine,
+        nlp: NlpOption::FastText,
+        threads: Some(2),
+        csv_output: None,
+        json_output: None,
+        recursive_way: RecursiveMode::On,
+        hot_test_path: hot,
+        cold_test_path: cold,
+        hot_label: Some(ClassificationLabel::WebAttack),
+        cold_label: Some(ClassificationLabel::RawData),
+        score_sum: ScoreSumMode::Off,
+        extra_match: Vec::new(),
+        k: Some(3),
+        p: None,
+        logistic_learning_rate: None,
+        logistic_epochs: None,
+        logistic_lambda: None,
+        random_forest_n_trees: None,
+        random_forest_mode: None,
+        random_forest_max_depth: None,
+        random_forest_max_features: None,
+        random_forest_min_samples_split: None,
+        random_forest_min_samples_leaf: None,
+        random_forest_bootstrap: None,
+        random_forest_oob_score: None,
+        svm_kernel: None,
+        svm_c: None,
+        svm_learning_rate: None,
+        svm_epochs: None,
+        svm_gamma: None,
+        svm_degree: None,
+        svm_coef0: None,
+        gradient_boosting_n_estimators: None,
+        gradient_boosting_learning_rate: None,
+        gradient_boosting_max_depth: None,
+        isolation_forest_n_trees: None,
+        isolation_forest_contamination: None,
+        isolation_forest_subsample_size: None,
+    };
+
+    rules.validate()?;
+    let classifier = ClassifierFactory::builder().from_rules_file(&rules).build()?;
+    let result = classifier.classify_text("free bonus casino offer", ScoreSumMode::Off, &[]);
+    assert!(!result.labels.is_empty());
+    Ok(())
 }

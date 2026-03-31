@@ -1,0 +1,1 @@
+vendor invoice paid to registered supplier procurement purchase order matched and reconciled successfully

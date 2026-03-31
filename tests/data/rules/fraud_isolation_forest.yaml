@@ -1,0 +1,13 @@
+report_name: UCI Fraud Isolation
+method: IsolationForest
+nlp: FastText
+recursive_way: ON
+hot_test_path: tests/data/uci_fraud/hot
+cold_test_path: tests/data/uci_fraud/cold
+hot_label: ANOMALY
+cold_label: RAW_DATA
+score_sum: OFF
+
+isolation_forest_n_trees: 80
+isolation_forest_contamination: 0.08
+isolation_forest_subsample_size: 32

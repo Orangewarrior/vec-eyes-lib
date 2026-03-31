@@ -1,0 +1,13 @@
+report_name: UCI Fraud
+method: RandomForest
+nlp: TfIdf
+recursive_way: ON
+hot_test_path: tests/data/uci_fraud/hot
+cold_test_path: tests/data/uci_fraud/cold
+hot_label: ANOMALY
+cold_label: RAW_DATA
+score_sum: OFF
+
+random_forest_n_trees: 61
+random_forest_max_depth: 10
+random_forest_min_samples_split: 2

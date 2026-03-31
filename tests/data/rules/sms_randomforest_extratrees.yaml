@@ -1,0 +1,18 @@
+report_name: UCI SMS ExtraTrees
+method: RandomForest
+nlp: TfIdf
+recursive_way: ON
+hot_test_path: tests/data/uci_sms/hot
+cold_test_path: tests/data/uci_sms/cold
+hot_label: SPAM
+cold_label: RAW_DATA
+score_sum: OFF
+
+random_forest_mode: extra_trees
+random_forest_n_trees: 61
+random_forest_max_depth: 10
+random_forest_max_features: log2
+random_forest_min_samples_split: 2
+random_forest_min_samples_leaf: 1
+random_forest_bootstrap: true
+random_forest_oob_score: true

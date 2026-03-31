@@ -1,0 +1,13 @@
+report_name: UCI SMS
+method: LogisticRegression
+nlp: TfIdf
+recursive_way: ON
+hot_test_path: tests/data/uci_sms/hot
+cold_test_path: tests/data/uci_sms/cold
+hot_label: SPAM
+cold_label: RAW_DATA
+score_sum: OFF
+
+logistic_learning_rate: 0.22
+logistic_epochs: 180
+logistic_lambda: 0.001

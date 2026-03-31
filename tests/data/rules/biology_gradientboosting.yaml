@@ -1,0 +1,13 @@
+report_name: UCI Biology
+method: GradientBoosting
+nlp: TfIdf
+recursive_way: ON
+hot_test_path: tests/data/uci_biology/hot
+cold_test_path: tests/data/uci_biology/cold
+hot_label: VIRUS
+cold_label: HUMAN
+score_sum: OFF
+
+gradient_boosting_n_estimators: 45
+gradient_boosting_learning_rate: 0.12
+gradient_boosting_max_depth: 1

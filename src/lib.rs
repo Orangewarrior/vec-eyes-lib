@@ -32,7 +32,10 @@ The library can load a YAML pipeline file that defines:
 
 "#]
 
+pub mod advanced_models;
 pub mod classifier;
+pub mod classifiers;
+pub mod factory;
 pub mod config;
 pub mod dataset;
 pub mod error;
@@ -40,10 +43,16 @@ pub mod labels;
 pub mod matcher;
 pub mod nlp;
 pub mod report;
+pub(crate) mod parallel;
 
 pub use classifier::{
     BayesBuilder, Classifier, ClassifierBuilder, ClassifierFactory, ClassifierMethod,
     DistanceMetric, KnnBuilder, MethodKind,
+};
+pub use advanced_models::{
+    AdvancedClassifier, AdvancedModelConfig, GradientBoostingConfig, IsolationForestConfig,
+    LogisticRegressionConfig, RandomForestConfig, RandomForestMaxFeatures, RandomForestMode,
+    SvmConfig, SvmKernel,
 };
 pub use config::{
     ExtraMatchConfig, ExtraMatchEngine, RecursiveMode, RulesFile, ScoreSumMode,

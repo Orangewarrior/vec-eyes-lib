@@ -1,8 +1,14 @@
+use crate::advanced_models::{
+    AdvancedClassifier, AdvancedMethod, AdvancedModelConfig, GradientBoostingConfig,
+    IsolationForestConfig, LogisticRegressionConfig, RandomForestConfig, RandomForestMaxFeatures,
+    RandomForestMode, SvmConfig, SvmKernel,
+};
 use crate::config::{RulesFile, ScoreSumMode};
 use crate::dataset::{load_training_samples, read_text_file, TrainingSample};
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::matcher::{AlertHit, RuleMatcher, ScoringEngine};
+use crate::parallel::install_pool;
 use crate::nlp::{
     dense_matrix_from_texts, fit_tfidf, transform_tfidf, DenseMatrix, FastTextConfigBuilder,
     NlpOption, TfIdfModel, WordEmbeddingModel,
@@ -25,11 +31,21 @@ pub enum MethodKind {
     KnnManhattan,
     #[serde(alias = "knn-minkowski", alias = "KnnMinkowski")]
     KnnMinkowski,
+    #[serde(alias = "logistic-regression", alias = "LogisticRegression")]
+    LogisticRegression,
+    #[serde(alias = "random-forest", alias = "RandomForest")]
+    RandomForest,
+    #[serde(alias = "isolation-forest", alias = "IsolationForest")]
+    IsolationForest,
+    #[serde(alias = "svm", alias = "Svm")]
+    Svm,
+    #[serde(alias = "gradient-boosting", alias = "GradientBoosting")]
+    GradientBoosting,
 }
 
 impl MethodKind {
     pub fn is_knn(&self) -> bool {
-        !matches!(self, Self::Bayes)
+matches!(self, Self::KnnCosine | Self::KnnEuclidean | Self::KnnManhattan | Self::KnnMinkowski)
     }
 
     pub fn requires_p(&self) -> bool {
@@ -44,6 +60,11 @@ pub enum ClassifierMethod {
     KnnEuclidean,
     KnnManhattan,
     KnnMinkowski,
+    LogisticRegression,
+    RandomForest,
+    IsolationForest,
+    Svm,
+    GradientBoosting,
 }
 
 impl From<MethodKind> for ClassifierMethod {
@@ -54,6 +75,11 @@ impl From<MethodKind> for ClassifierMethod {
             MethodKind::KnnEuclidean => Self::KnnEuclidean,
             MethodKind::KnnManhattan => Self::KnnManhattan,
             MethodKind::KnnMinkowski => Self::KnnMinkowski,
+            MethodKind::LogisticRegression => Self::LogisticRegression,
+            MethodKind::RandomForest => Self::RandomForest,
+            MethodKind::IsolationForest => Self::IsolationForest,
+            MethodKind::Svm => Self::Svm,
+            MethodKind::GradientBoosting => Self::GradientBoosting,
         }
     }
 }
@@ -92,6 +118,7 @@ pub struct ClassifierBuilder {
     threads: Option<usize>,
     k: Option<usize>,
     p: Option<f32>,
+    advanced: AdvancedModelConfig,
 }
 
 impl ClassifierBuilder {
@@ -107,6 +134,7 @@ impl ClassifierBuilder {
             threads: None,
             k: None,
             p: None,
+            advanced: AdvancedModelConfig::default(),
         }
     }
 
@@ -160,6 +188,87 @@ impl ClassifierBuilder {
         self
     }
 
+    pub fn logistic_config(mut self, learning_rate: f32, epochs: usize, lambda: Option<f32>) -> Self {
+        self.advanced.logistic = Some(LogisticRegressionConfig {
+            learning_rate,
+            epochs,
+            lambda: lambda.unwrap_or(1e-3),
+        });
+        self
+    }
+
+    pub fn random_forest_config(mut self, n_trees: usize, max_depth: Option<usize>, min_samples_split: Option<usize>) -> Self {
+        self.advanced.random_forest = Some(RandomForestConfig {
+            n_trees,
+            max_depth: max_depth.unwrap_or(6),
+            min_samples_split: min_samples_split.unwrap_or(2),
+            ..RandomForestConfig::default()
+        });
+        self
+    }
+
+    pub fn random_forest_mode(mut self, mode: RandomForestMode) -> Self {
+        let mut cfg = self.advanced.random_forest.take().unwrap_or_default();
+        cfg.mode = mode;
+        self.advanced.random_forest = Some(cfg);
+        self
+    }
+
+    pub fn random_forest_full_config(
+        mut self,
+        mode: RandomForestMode,
+        n_trees: usize,
+        max_depth: Option<usize>,
+        max_features: Option<RandomForestMaxFeatures>,
+        min_samples_split: Option<usize>,
+        min_samples_leaf: Option<usize>,
+        bootstrap: Option<bool>,
+        oob_score: Option<bool>,
+    ) -> Self {
+        self.advanced.random_forest = Some(RandomForestConfig {
+            mode,
+            n_trees,
+            max_depth: max_depth.unwrap_or(6),
+            max_features: max_features.unwrap_or(RandomForestMaxFeatures::Sqrt),
+            min_samples_split: min_samples_split.unwrap_or(2),
+            min_samples_leaf: min_samples_leaf.unwrap_or(1),
+            bootstrap: bootstrap.unwrap_or(true),
+            oob_score: oob_score.unwrap_or(false),
+        });
+        self
+    }
+
+    pub fn svm_config(mut self, kernel: SvmKernel, c: f32, learning_rate: Option<f32>, epochs: Option<usize>, gamma: Option<f32>, degree: Option<usize>, coef0: Option<f32>) -> Self {
+        self.advanced.svm = Some(SvmConfig {
+            kernel,
+            c,
+            learning_rate: learning_rate.unwrap_or(0.08),
+            epochs: epochs.unwrap_or(40),
+            gamma: gamma.unwrap_or(0.35),
+            degree: degree.unwrap_or(2),
+            coef0: coef0.unwrap_or(0.0),
+        });
+        self
+    }
+
+    pub fn gradient_boosting_config(mut self, n_estimators: usize, learning_rate: f32, max_depth: Option<usize>) -> Self {
+        self.advanced.gradient_boosting = Some(GradientBoostingConfig {
+            n_estimators,
+            learning_rate,
+            max_depth: max_depth.unwrap_or(1),
+        });
+        self
+    }
+
+    pub fn isolation_forest_config(mut self, n_trees: usize, contamination: f32, subsample_size: Option<usize>) -> Self {
+        self.advanced.isolation_forest = Some(IsolationForestConfig {
+            n_trees,
+            contamination,
+            subsample_size: subsample_size.unwrap_or(64),
+        });
+        self
+    }
+
     pub fn from_rules_file(mut self, rules: &RulesFile) -> Self {
         self.method = Some(rules.method.clone().into());
         self.nlp = Some(rules.nlp.clone());
@@ -171,6 +280,53 @@ impl ClassifierBuilder {
         self.threads = rules.threads;
         self.k = rules.k;
         self.p = rules.p;
+        self.advanced.logistic = match (rules.logistic_learning_rate, rules.logistic_epochs) {
+            (Some(learning_rate), Some(epochs)) => Some(LogisticRegressionConfig {
+                learning_rate,
+                epochs,
+                lambda: rules.logistic_lambda.unwrap_or(1e-3),
+            }),
+            _ => None,
+        };
+        self.advanced.random_forest = rules.random_forest_n_trees.map(|n_trees| RandomForestConfig {
+            mode: rules.random_forest_mode.clone().unwrap_or(RandomForestMode::Standard),
+            n_trees,
+            max_depth: rules.random_forest_max_depth.unwrap_or(6),
+            max_features: rules.random_forest_max_features.clone().unwrap_or(RandomForestMaxFeatures::Sqrt),
+            min_samples_split: rules.random_forest_min_samples_split.unwrap_or(2),
+            min_samples_leaf: rules.random_forest_min_samples_leaf.unwrap_or(1),
+            bootstrap: rules.random_forest_bootstrap.unwrap_or(true),
+            oob_score: rules.random_forest_oob_score.unwrap_or(false),
+        });
+        self.advanced.svm = match (rules.svm_kernel.clone(), rules.svm_c) {
+            (Some(kernel), Some(c)) => Some(SvmConfig {
+                kernel,
+                c,
+                learning_rate: rules.svm_learning_rate.unwrap_or(0.08),
+                epochs: rules.svm_epochs.unwrap_or(40),
+                gamma: rules.svm_gamma.unwrap_or(0.35),
+                degree: rules.svm_degree.unwrap_or(2),
+                coef0: rules.svm_coef0.unwrap_or(0.0),
+            }),
+            _ => None,
+        };
+        self.advanced.gradient_boosting = match (rules.gradient_boosting_n_estimators, rules.gradient_boosting_learning_rate) {
+            (Some(n_estimators), Some(learning_rate)) => Some(GradientBoostingConfig {
+                n_estimators,
+                learning_rate,
+                max_depth: rules.gradient_boosting_max_depth.unwrap_or(1),
+            }),
+            _ => None,
+        };
+        self.advanced.threads = rules.threads;
+        self.advanced.isolation_forest = match (rules.isolation_forest_n_trees, rules.isolation_forest_contamination) {
+            (Some(n_trees), Some(contamination)) => Some(IsolationForestConfig {
+                n_trees,
+                contamination,
+                subsample_size: rules.isolation_forest_subsample_size.unwrap_or(64),
+            }),
+            _ => None,
+        };
         self
     }
 
@@ -183,33 +339,88 @@ impl ClassifierBuilder {
         let mut samples = Vec::new();
 
         if let Some(hot_path) = &self.hot_path {
-            let mut hot = load_training_samples(hot_path, hot_label, self.recursive)?;
+            let mut hot = load_training_samples(hot_path, hot_label.clone(), self.recursive)?;
             samples.append(&mut hot);
         }
         if let Some(cold_path) = &self.cold_path {
-            let mut cold = load_training_samples(cold_path, cold_label, self.recursive)?;
+            let mut cold = load_training_samples(cold_path, cold_label.clone(), self.recursive)?;
             samples.append(&mut cold);
         }
 
         match method {
-            ClassifierMethod::Bayes => Ok(Box::new(BayesBuilder::new().nlp(nlp).samples(samples).build()?)),
+            ClassifierMethod::Bayes => Ok(Box::new(BayesBuilder::new().nlp(nlp).samples(samples).threads(self.threads).build()?)),
             ClassifierMethod::KnnCosine => {
                 let k = require_k(self.k)?;
-                Ok(Box::new(KnnBuilder::new().nlp(nlp).samples(samples).k(k).cosine().build()?))
+                Ok(Box::new(KnnBuilder::new().nlp(nlp).samples(samples).threads(self.threads).k(k).cosine().build()?))
             }
             ClassifierMethod::KnnEuclidean => {
                 let k = require_k(self.k)?;
-                Ok(Box::new(KnnBuilder::new().nlp(nlp).samples(samples).k(k).euclidean().build()?))
+                Ok(Box::new(KnnBuilder::new().nlp(nlp).samples(samples).threads(self.threads).k(k).euclidean().build()?))
             }
             ClassifierMethod::KnnManhattan => {
                 let k = require_k(self.k)?;
-                Ok(Box::new(KnnBuilder::new().nlp(nlp).samples(samples).k(k).manhattan().build()?))
+                Ok(Box::new(KnnBuilder::new().nlp(nlp).samples(samples).threads(self.threads).k(k).manhattan().build()?))
             }
             ClassifierMethod::KnnMinkowski => {
                 let k = require_k(self.k)?;
                 let p = require_p(self.p)?;
-                Ok(Box::new(KnnBuilder::new().nlp(nlp).samples(samples).k(k).p(p).minkowski(p).build()?))
+                Ok(Box::new(KnnBuilder::new().nlp(nlp).samples(samples).threads(self.threads).k(k).p(p).minkowski(p).build()?))
             }
+            ClassifierMethod::LogisticRegression => {
+                require_logistic_config(&self.advanced)?;
+                Ok(Box::new(AdvancedClassifier::train(
+                    AdvancedMethod::LogisticRegression,
+                    &samples,
+                    nlp,
+                    hot_label,
+                    cold_label,
+                    &self.advanced,
+                )?))
+            },
+            ClassifierMethod::RandomForest => {
+                require_random_forest_config(&self.advanced)?;
+                Ok(Box::new(AdvancedClassifier::train(
+                    AdvancedMethod::RandomForest,
+                    &samples,
+                    nlp,
+                    hot_label,
+                    cold_label,
+                    &self.advanced,
+                )?))
+            },
+            ClassifierMethod::IsolationForest => {
+                require_isolation_forest_config(&self.advanced)?;
+                Ok(Box::new(AdvancedClassifier::train(
+                    AdvancedMethod::IsolationForest,
+                    &samples,
+                    nlp,
+                    hot_label,
+                    cold_label,
+                    &self.advanced,
+                )?))
+            },
+            ClassifierMethod::Svm => {
+                require_svm_config(&self.advanced)?;
+                Ok(Box::new(AdvancedClassifier::train(
+                    AdvancedMethod::Svm,
+                    &samples,
+                    nlp,
+                    hot_label,
+                    cold_label,
+                    &self.advanced,
+                )?))
+            },
+            ClassifierMethod::GradientBoosting => {
+                require_gradient_boosting_config(&self.advanced)?;
+                Ok(Box::new(AdvancedClassifier::train(
+                    AdvancedMethod::GradientBoosting,
+                    &samples,
+                    nlp,
+                    hot_label,
+                    cold_label,
+                    &self.advanced,
+                )?))
+            },
         }
     }
 }
@@ -230,15 +441,61 @@ fn require_p(value: Option<f32>) -> Result<f32, VecEyesError> {
     Ok(p)
 }
 
+fn require_logistic_config(config: &AdvancedModelConfig) -> Result<(), VecEyesError> {
+    match &config.logistic {
+        Some(cfg) if cfg.learning_rate > 0.0 && cfg.epochs > 0 => Ok(()),
+        _ => Err(VecEyesError::InvalidConfig(
+            "LogisticRegression requires logistic_learning_rate and logistic_epochs".into(),
+        )),
+    }
+}
+
+fn require_random_forest_config(config: &AdvancedModelConfig) -> Result<(), VecEyesError> {
+    match &config.random_forest {
+        Some(cfg) if cfg.n_trees > 0 => Ok(()),
+        _ => Err(VecEyesError::InvalidConfig(
+            "RandomForest requires random_forest_n_trees".into(),
+        )),
+    }
+}
+
+fn require_svm_config(config: &AdvancedModelConfig) -> Result<(), VecEyesError> {
+    match &config.svm {
+        Some(cfg) if cfg.c > 0.0 && cfg.epochs > 0 && cfg.learning_rate > 0.0 => Ok(()),
+        _ => Err(VecEyesError::InvalidConfig(
+            "Svm requires svm_kernel and svm_c plus valid training defaults".into(),
+        )),
+    }
+}
+
+fn require_gradient_boosting_config(config: &AdvancedModelConfig) -> Result<(), VecEyesError> {
+    match &config.gradient_boosting {
+        Some(cfg) if cfg.n_estimators > 0 && cfg.learning_rate > 0.0 => Ok(()),
+        _ => Err(VecEyesError::InvalidConfig(
+            "GradientBoosting requires gradient_boosting_n_estimators and gradient_boosting_learning_rate".into(),
+        )),
+    }
+}
+
+fn require_isolation_forest_config(config: &AdvancedModelConfig) -> Result<(), VecEyesError> {
+    match &config.isolation_forest {
+        Some(cfg) if cfg.n_trees > 0 && cfg.contamination > 0.0 && cfg.contamination < 0.5 => Ok(()),
+        _ => Err(VecEyesError::InvalidConfig(
+            "IsolationForest requires isolation_forest_n_trees and isolation_forest_contamination".into(),
+        )),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BayesBuilder {
     nlp: NlpOption,
     samples: Vec<TrainingSample>,
+    threads: Option<usize>,
 }
 
 impl BayesBuilder {
     pub fn new() -> Self {
-        Self { nlp: NlpOption::Count, samples: Vec::new() }
+        Self { nlp: NlpOption::Count, samples: Vec::new(), threads: None }
     }
 
     pub fn nlp(mut self, nlp: NlpOption) -> Self {
@@ -251,8 +508,13 @@ impl BayesBuilder {
         self
     }
 
+    pub fn threads(mut self, threads: Option<usize>) -> Self {
+        self.threads = threads;
+        self
+    }
+
     pub fn build(self) -> Result<BayesClassifier, VecEyesError> {
-        BayesClassifier::train(&self.samples, self.nlp)
+        BayesClassifier::train(&self.samples, self.nlp, self.threads)
     }
 }
 
@@ -265,6 +527,7 @@ pub enum BayesFeature {
 #[derive(Debug, Clone)]
 pub struct BayesClassifier {
     nlp: NlpOption,
+    threads: Option<usize>,
     labels: Vec<ClassificationLabel>,
     token_scores: HashMap<ClassificationLabel, HashMap<String, f32>>,
     priors: HashMap<ClassificationLabel, f32>,
@@ -272,7 +535,7 @@ pub struct BayesClassifier {
 }
 
 impl BayesClassifier {
-    pub fn train(samples: &[TrainingSample], nlp: NlpOption) -> Result<Self, VecEyesError> {
+    pub fn train(samples: &[TrainingSample], nlp: NlpOption, threads: Option<usize>) -> Result<Self, VecEyesError> {
         let mut token_scores: HashMap<ClassificationLabel, HashMap<String, f32>> = HashMap::new();
         let mut label_counts: HashMap<ClassificationLabel, usize> = HashMap::new();
         let texts: Vec<String> = samples.iter().map(|s| s.text.clone()).collect();
@@ -296,39 +559,49 @@ impl BayesClassifier {
             priors.insert(label, count as f32 / total.max(1.0));
         }
 
-        Ok(Self { nlp, labels, token_scores, priors, tfidf })
+        Ok(Self { nlp, threads, labels, token_scores, priors, tfidf })
     }
 
     fn base_scores(&self, text: &str) -> Vec<(ClassificationLabel, f32)> {
         let normalized = crate::nlp::normalize_text(text);
         let tokens = crate::nlp::tokenize(&normalized);
-        let mut raw = Vec::new();
+        let labels = self.labels.clone();
+        let tfidf_matrix = if self.nlp == NlpOption::TfIdf {
+            self.tfidf.as_ref().map(|model| transform_tfidf(model, &[text.to_string()]))
+        } else {
+            None
+        };
 
-        for label in &self.labels {
-            let prior = self.priors.get(label).copied().unwrap_or(0.01).ln();
-            let token_map = self.token_scores.get(label);
-            let mut score = prior;
+        let raw = install_pool(self.threads, || {
+            use rayon::prelude::*;
+            labels
+                .par_iter()
+                .map(|label| {
+                    let prior = self.priors.get(label).copied().unwrap_or(0.01).ln();
+                    let token_map = self.token_scores.get(label);
+                    let mut score = prior;
 
-            if self.nlp == NlpOption::TfIdf {
-                if let Some(model) = &self.tfidf {
-                    let matrix = transform_tfidf(model, &[text.to_string()]);
-                    for token in &tokens {
-                        if let Some(index) = model.token_to_index.get(token) {
-                            let weight = matrix[[0, *index]].max(1e-6);
+                    if self.nlp == NlpOption::TfIdf {
+                        if let (Some(model), Some(matrix)) = (&self.tfidf, &tfidf_matrix) {
+                            for token in &tokens {
+                                if let Some(index) = model.token_to_index.get(token) {
+                                    let weight = matrix[[0, *index]].max(1e-6);
+                                    let token_count = token_map.and_then(|m| m.get(token)).copied().unwrap_or(1.0);
+                                    score += (token_count * weight).ln();
+                                }
+                            }
+                        }
+                    } else {
+                        for token in &tokens {
                             let token_count = token_map.and_then(|m| m.get(token)).copied().unwrap_or(1.0);
-                            score += (token_count * weight).ln();
+                            score += token_count.ln();
                         }
                     }
-                }
-            } else {
-                for token in &tokens {
-                    let token_count = token_map.and_then(|m| m.get(token)).copied().unwrap_or(1.0);
-                    score += token_count.ln();
-                }
-            }
 
-            raw.push((label.clone(), score));
-        }
+                    (label.clone(), score)
+                })
+                .collect::<Vec<_>>()
+        });
 
         softmax_scores(&raw)
     }
@@ -369,6 +642,7 @@ pub struct KnnBuilder {
     dims: usize,
     k: Option<usize>,
     p: Option<f32>,
+    threads: Option<usize>,
 }
 
 impl KnnBuilder {
@@ -380,6 +654,7 @@ impl KnnBuilder {
             dims: 32,
             k: None,
             p: None,
+            threads: None,
         }
     }
 
@@ -400,6 +675,11 @@ impl KnnBuilder {
 
     pub fn p(mut self, p: f32) -> Self {
         self.p = Some(p);
+        self
+    }
+
+    pub fn threads(mut self, threads: Option<usize>) -> Self {
+        self.threads = threads;
         self
     }
 
@@ -429,7 +709,7 @@ impl KnnBuilder {
         if let DistanceMetric::Minkowski(_) = self.metric {
             require_p(self.p)?;
         }
-        KnnClassifier::train(&self.samples, self.nlp, self.metric, self.dims, k)
+        KnnClassifier::train(&self.samples, self.nlp, self.metric, self.dims, k, self.threads)
     }
 }
 
@@ -442,6 +722,7 @@ pub enum DenseFeatureModel {
 #[derive(Debug, Clone)]
 pub struct KnnClassifier {
     metric: DistanceMetric,
+    threads: Option<usize>,
     labels: Vec<ClassificationLabel>,
     matrix: DenseMatrix,
     model: DenseFeatureModel,
@@ -455,6 +736,7 @@ impl KnnClassifier {
         metric: DistanceMetric,
         dims: usize,
         k: usize,
+        threads: Option<usize>,
     ) -> Result<Self, VecEyesError> {
         let texts: Vec<String> = samples.iter().map(|s| s.text.clone()).collect();
         let labels: Vec<ClassificationLabel> = samples.iter().map(|s| s.label.clone()).collect();
@@ -473,7 +755,7 @@ impl KnnClassifier {
             DenseFeatureModel::FastText(inner) => dense_matrix_from_texts(inner, &texts),
         };
 
-        Ok(Self { metric, labels, matrix, model, k })
+        Ok(Self { metric, threads, labels, matrix, model, k })
     }
 
     fn matrix_for_text(&self, text: &str) -> DenseMatrix {
@@ -488,19 +770,23 @@ impl KnnClassifier {
         let probe = self.matrix_for_text(text);
         let probe_row = probe.index_axis(Axis(0), 0);
         let probe_vec = probe_row.to_vec();
-        let mut ranked: Vec<(f32, ClassificationLabel)> = Vec::new();
-
-        for row in 0..self.matrix.shape()[0] {
-            let candidate = self.matrix.index_axis(Axis(0), row);
-            let candidate_vec = candidate.to_vec();
-            let distance = match self.metric {
-                DistanceMetric::Cosine => cosine_distance(&probe_vec, &candidate_vec),
-                DistanceMetric::Euclidean => euclidean_distance(&probe_vec, &candidate_vec),
-                DistanceMetric::Manhattan => manhattan_distance(&probe_vec, &candidate_vec),
-                DistanceMetric::Minkowski(p) => minkowski_distance(&probe_vec, &candidate_vec, p),
-            };
-            ranked.push((distance, self.labels[row].clone()));
-        }
+        let mut ranked: Vec<(f32, ClassificationLabel)> = install_pool(self.threads, || {
+            use rayon::prelude::*;
+            (0..self.matrix.shape()[0])
+                .into_par_iter()
+                .map(|row| {
+                    let candidate = self.matrix.index_axis(Axis(0), row);
+                    let candidate_vec = candidate.to_vec();
+                    let distance = match self.metric {
+                        DistanceMetric::Cosine => cosine_distance(&probe_vec, &candidate_vec),
+                        DistanceMetric::Euclidean => euclidean_distance(&probe_vec, &candidate_vec),
+                        DistanceMetric::Manhattan => manhattan_distance(&probe_vec, &candidate_vec),
+                        DistanceMetric::Minkowski(p) => minkowski_distance(&probe_vec, &candidate_vec, p),
+                    };
+                    (distance, self.labels[row].clone())
+                })
+                .collect::<Vec<_>>()
+        });
 
         ranked.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -576,7 +862,7 @@ pub fn run_rules_pipeline(
     Ok(report)
 }
 
-fn softmax_scores(input: &[(ClassificationLabel, f32)]) -> Vec<(ClassificationLabel, f32)> {
+pub(crate) fn softmax_scores(input: &[(ClassificationLabel, f32)]) -> Vec<(ClassificationLabel, f32)> {
     if input.is_empty() {
         return Vec::new();
     }

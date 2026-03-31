@@ -1,0 +1,10 @@
+report_name: Invalid Svm
+method: Svm
+nlp: TfIdf
+recursive_way: ON
+hot_test_path: tests/data/uci_sms/hot
+cold_test_path: tests/data/uci_sms/cold
+hot_label: SPAM
+cold_label: RAW_DATA
+score_sum: OFF
+svm_c: 1.0

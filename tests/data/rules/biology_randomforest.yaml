@@ -1,0 +1,13 @@
+report_name: UCI Biology
+method: RandomForest
+nlp: TfIdf
+recursive_way: ON
+hot_test_path: tests/data/uci_biology/hot
+cold_test_path: tests/data/uci_biology/cold
+hot_label: VIRUS
+cold_label: HUMAN
+score_sum: OFF
+
+random_forest_n_trees: 51
+random_forest_max_depth: 8
+random_forest_min_samples_split: 2

@@ -1,0 +1,14 @@
+report_name: UCI SMS
+method: Svm
+nlp: TfIdf
+recursive_way: ON
+hot_test_path: tests/data/uci_sms/hot
+cold_test_path: tests/data/uci_sms/cold
+hot_label: SPAM
+cold_label: RAW_DATA
+score_sum: OFF
+
+svm_kernel: Linear
+svm_c: 1.2
+svm_learning_rate: 0.08
+svm_epochs: 50

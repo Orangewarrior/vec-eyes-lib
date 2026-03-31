@@ -55,7 +55,7 @@ Normalization / Tokenization
         ↓
 Feature Extraction (TF-IDF / Embeddings)
         ↓
-ML Engine (KNN / Bayes)
+ML Engine (classifiers)
         ↓
 Rule Engine (Regex / VectorScan)
         ↓

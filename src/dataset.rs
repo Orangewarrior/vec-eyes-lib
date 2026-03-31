@@ -1,4 +1,5 @@
 use crate::error::VecEyesError;
+use crate::security::sanitize_existing_path;
 use crate::labels::ClassificationLabel;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,7 +13,7 @@ pub struct TrainingSample {
 }
 
 pub fn read_text_file(path: &Path) -> Result<String, VecEyesError> {
-    Ok(fs::read_to_string(path)?)
+Ok(fs::read_to_string(sanitize_existing_path(path)?)?)
 }
 
 pub fn collect_files_recursively(
@@ -21,13 +22,15 @@ pub fn collect_files_recursively(
 ) -> Result<Vec<PathBuf>, VecEyesError> {
     let mut files = Vec::new();
     if recursive {
+        let root = sanitize_existing_path(root)?;
         for entry in WalkDir::new(root) {
-            let entry = entry.map_err(|e| VecEyesError::InvalidConfig(e.to_string()))?;
+            let entry = entry.map_err(|e| VecEyesError::invalid_config("dataset::collect_files_recursively", e.to_string()))?;
             if entry.file_type().is_file() {
                 files.push(entry.path().to_path_buf());
             }
         }
     } else {
+        let root = sanitize_existing_path(root)?;
         for entry in fs::read_dir(root)? {
             let entry = entry?;
             if entry.file_type()?.is_file() {

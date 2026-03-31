@@ -1,7 +1,7 @@
 use crate::config::{ExtraMatchConfig, ExtraMatchEngine, RulesFile, ScoreSumMode};
 use crate::dataset::{collect_files_recursively, read_text_file};
 use crate::error::VecEyesError;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -46,7 +46,7 @@ impl RegexMatcher {
     pub fn from_ruleset(rule_set: &RuleSet) -> Result<Self, VecEyesError> {
         let mut compiled = Vec::new();
         for rule in &rule_set.rules {
-            compiled.push((rule.clone(), Regex::new(&rule.match_rule)?));
+            compiled.push((rule.clone(), RegexBuilder::new(&rule.match_rule).size_limit(10_000_000).dfa_size_limit(2_000_000).build()?));
         }
         Ok(Self { compiled })
     }
@@ -118,9 +118,7 @@ impl MatcherFactory {
                 }
                 #[cfg(not(feature = "vectorscan"))]
                 {
-                    Err(VecEyesError::Unsupported(
-                        "vectorscan feature not enabled; use regex fallback or build with --features vectorscan".to_string(),
-                    ))
+                    Err(VecEyesError::unsupported("matcher::MatcherFactory::build_from_extra_match", "vectorscan feature not enabled; use regex fallback or build with --features vectorscan"))
                 }
             }
         }
@@ -130,13 +128,21 @@ impl MatcherFactory {
 impl RuleSet {
     pub fn from_json_file(path: &Path) -> Result<Self, VecEyesError> {
         let content = read_text_file(path)?;
-        let rules: Vec<MatchRule> = serde_json::from_str(&content)?;
+        let value: serde_json::Value = serde_json::from_str(&content)?;
+        if !value.is_array() {
+            return Err(VecEyesError::invalid_config("matcher::RuleSet::from_json_file", format!("expected JSON array of rules in {}", path.display())));
+        }
+        let rules: Vec<MatchRule> = serde_json::from_value(value)?;
         Ok(Self { rules })
     }
 
     pub fn from_yaml_file(path: &Path) -> Result<Self, VecEyesError> {
         let content = read_text_file(path)?;
-        let rules: Vec<MatchRule> = serde_yaml::from_str(&content)?;
+        let value: serde_yaml::Value = serde_yaml::from_str(&content)?;
+        if !matches!(value, serde_yaml::Value::Sequence(_)) {
+            return Err(VecEyesError::invalid_config("matcher::RuleSet::from_yaml_file", format!("expected YAML sequence of rules in {}", path.display())));
+        }
+        let rules: Vec<MatchRule> = serde_yaml::from_value(value)?;
         Ok(Self { rules })
     }
 

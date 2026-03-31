@@ -23,3 +23,13 @@ pub enum VecEyesError {
     #[error("unsupported operation: {0}")]
     Unsupported(String),
 }
+
+impl VecEyesError {
+    pub fn invalid_config(context: impl AsRef<str>, message: impl AsRef<str>) -> Self {
+        Self::InvalidConfig(format!("{} - {}", context.as_ref(), message.as_ref()))
+    }
+
+    pub fn unsupported(context: impl AsRef<str>, message: impl AsRef<str>) -> Self {
+        Self::Unsupported(format!("{} - {}", context.as_ref(), message.as_ref()))
+    }
+}

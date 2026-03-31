@@ -148,7 +148,7 @@ pub struct RulesFile {
 impl RulesFile {
     pub fn validate(&self) -> Result<(), VecEyesError> {
         if self.threads == Some(0) {
-            return Err(VecEyesError::InvalidConfig("threads must be >= 1".into()));
+            return Err(VecEyesError::invalid_config("config::RulesFile::validate", "threads must be >= 1"));
         }
 
         if !self.hot_test_path.exists() {
@@ -288,8 +288,12 @@ impl RulesFile {
 
     /// Loads a YAML rules file from disk and validates it before returning it.
     pub fn from_yaml_path<P: AsRef<Path>>(path: P) -> Result<Self, VecEyesError> {
-        let content = std::fs::read_to_string(path)?;
-        let rules: Self = serde_yaml::from_str(&content)?;
+        let content = std::fs::read_to_string(&path)?;
+        let value: serde_yaml::Value = serde_yaml::from_str(&content)?;
+        if !matches!(value, serde_yaml::Value::Mapping(_)) {
+            return Err(VecEyesError::invalid_config("config::RulesFile::from_yaml_path", format!("expected a YAML mapping at root for {}", path.as_ref().display())));
+        }
+        let rules: Self = serde_yaml::from_value(value)?;
         rules.validate()?;
         Ok(rules)
     }

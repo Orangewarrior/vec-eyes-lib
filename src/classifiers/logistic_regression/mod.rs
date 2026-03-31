@@ -1,3 +1,4 @@
+pub(crate) mod core;
 use crate::advanced_models::LogisticRegressionConfig;
 use crate::classifier::{ClassifierBuilder, ClassifierFactory, ClassifierMethod};
 

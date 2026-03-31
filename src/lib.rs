@@ -33,7 +33,9 @@ The library can load a YAML pipeline file that defines:
 "#]
 
 pub mod advanced_models;
+pub mod builders;
 pub mod classifier;
+pub mod compat;
 pub mod classifiers;
 pub mod factory;
 pub mod config;
@@ -43,6 +45,7 @@ pub mod labels;
 pub mod matcher;
 pub mod nlp;
 pub mod report;
+pub mod security;
 pub(crate) mod parallel;
 
 pub use classifier::{
@@ -66,3 +69,8 @@ pub use matcher::{
 };
 pub use nlp::{FastTextConfig, FastTextConfigBuilder, NlpOption};
 pub use report::{ClassificationReport, ClassificationRecord};
+
+pub use compat::{alerts, EngineBuilder, NlpPipeline, NlpPipelineBuilder, OutputWriters, RepresentationKind};
+pub use factory::TypedClassifierBuilder;
+
+pub use builders::Builder;

@@ -1,3 +1,4 @@
+pub(crate) mod core;
 use crate::advanced_models::GradientBoostingConfig;
 use crate::classifier::{ClassifierBuilder, ClassifierFactory, ClassifierMethod};
 

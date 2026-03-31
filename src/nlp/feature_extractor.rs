@@ -10,17 +10,19 @@ pub type DenseMatrix = Array2<f32>;
 pub struct FastTextConfig {
     pub min_n: usize,
     pub max_n: usize,
+    pub dimensions: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct FastTextConfigBuilder {
     min_n: usize,
     max_n: usize,
+    dimensions: usize,
 }
 
 impl FastTextConfigBuilder {
     pub fn new() -> Self {
-        Self { min_n: 3, max_n: 5 }
+        Self { min_n: 3, max_n: 5, dimensions: 32 }
     }
 
     pub fn min_n(mut self, value: usize) -> Self {
@@ -33,11 +35,27 @@ impl FastTextConfigBuilder {
         self
     }
 
-    pub fn build(self) -> FastTextConfig {
-        FastTextConfig {
+    pub fn dimensions(mut self, value: usize) -> Self {
+        self.dimensions = value.max(1);
+        self
+    }
+
+    pub fn build(self) -> Result<FastTextConfig, crate::error::VecEyesError> {
+        if self.min_n == 0 || self.max_n == 0 {
+            return Err(crate::error::VecEyesError::InvalidConfig(
+                "FastText n-gram sizes must be >= 1".into(),
+            ));
+        }
+        if self.min_n > self.max_n {
+            return Err(crate::error::VecEyesError::InvalidConfig(
+                "FastText min_n cannot be greater than max_n".into(),
+            ));
+        }
+        Ok(FastTextConfig {
             min_n: self.min_n,
             max_n: self.max_n,
-        }
+            dimensions: self.dimensions.max(1),
+        })
     }
 }
 

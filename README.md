@@ -493,6 +493,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
+## Compatibility Matrix
+
+The matrix below is designed to make Vec-Eyes easier to understand and safer to configure. It summarizes what each classifier is best at, which NLP representations fit best, which parameters are required, and which non-trivial parameters strongly affect results.
+
+| Classifier | Best NLP / Feature Input | Required Parameters | Important Non-Trivial Parameters | Best Use Cases | Notes |
+|---|---|---|---|---|---|
+| **Bayes** | `Count`, `TfIdf` | None | `threads` | Spam detection, fast baseline text classification, simple fraud text screening | Very fast and stable. Best as a baseline. Not ideal for dense embeddings like Word2Vec/FastText. |
+| **KnnCosine** | `FastText`, `Word2Vec` | `k` | `threads` | Similarity-based classification, noisy text, phishing, behavioral text matching | Strong default for embedding-based text classification. Cosine is usually the best first KNN metric for dense vectors. |
+| **KnnEuclidean** | `FastText`, `Word2Vec` | `k` | `threads` | Distance-based embedding experiments, attack clustering | More sensitive to magnitude than cosine. Useful for controlled experiments. |
+| **KnnManhattan** | `FastText`, `Word2Vec` | `k` | `threads` | Alternative distance profile for embeddings | Often used for experimentation rather than as the default production KNN choice. |
+| **KnnMinkowski** | `FastText`, `Word2Vec` | `k`, `p` | `threads` | Research-style distance tuning, anomaly/similarity experiments | `p` changes the geometry of distance. Use only when you explicitly want to tune distance behavior. |
+| **LogisticRegression** | `TfIdf`, `Count`, sometimes dense embeddings | `logistic_learning_rate`, `logistic_epochs` | `logistic_lambda`, `threads` | Fraud classification, text classification, strong production baseline | Great balance between interpretability, speed, and quality. Very practical model. |
+| **SVM** | `TfIdf`, `Count`, sometimes dense embeddings | `svm_kernel`, `svm_c` | `svm_learning_rate`, `svm_epochs`, `svm_gamma`, `svm_degree`, `svm_coef0`, `threads` | Security text classification, spam, fraud, web attack text | `Linear` is usually the best first choice. `Rbf` is more expressive but more sensitive to tuning. |
+| **RandomForest** | `TfIdf`, `FastText`, structured-ish feature sets | `random_forest_n_trees` | `random_forest_mode`, `random_forest_max_depth`, `random_forest_max_features`, `random_forest_min_samples_split`, `random_forest_min_samples_leaf`, `random_forest_bootstrap`, `random_forest_oob_score`, `threads` | Richer risk scoring, structured features, fraud, mixed-signal classification | Good when you want ensembles and model diversity. Supports `Standard`, `Balanced`, and `ExtraTrees`. |
+| **GradientBoosting** | `TfIdf`, structured-ish feature sets | `gradient_boosting_n_estimators`, `gradient_boosting_learning_rate` | `gradient_boosting_max_depth`, `threads` | Fraud/risk scoring, more expressive tabular-like classification | More sensitive to hyperparameters than Bayes or Logistic Regression. |
+| **IsolationForest** | `FastText`, `Word2Vec`, anomaly-oriented feature sets | `isolation_forest_n_trees`, `isolation_forest_contamination` | `isolation_forest_subsample_size`, `threads` | Anomaly detection, unusual behavior detection, outlier hunting | Best when the goal is finding what looks abnormal rather than choosing among many known labels. |
+
+---
+
+
 ## 🧠 How Dataset Loading Works
 
 - `hot` directories → labeled as target class

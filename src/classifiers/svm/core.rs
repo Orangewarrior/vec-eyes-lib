@@ -1,3 +1,4 @@
+
 use ndarray::{Array1, Array2, Axis};
 use rayon::prelude::*;
 
@@ -8,38 +9,49 @@ use crate::labels::ClassificationLabel;
 use crate::nlp::DenseMatrix;
 use crate::parallel::install_pool;
 
-fn apply_svm_kernel_map(matrix: &DenseMatrix, config: &SvmConfig) -> DenseMatrix {
-    let mut mapped = matrix.clone();
+fn pairwise_kernel_value(lhs: &[f32], rhs: &[f32], config: &SvmConfig) -> f32 {
     match config.kernel {
-        SvmKernel::Linear => mapped,
+        SvmKernel::Linear => lhs.iter().zip(rhs.iter()).map(|(a, b)| a * b).sum(),
         SvmKernel::Rbf => {
-            for row in 0..mapped.shape()[0] {
-                for col in 0..mapped.shape()[1] {
-                    let value = mapped[[row, col]];
-                    mapped[[row, col]] = (-config.gamma * value * value).exp();
-                }
-            }
-            mapped
+            let squared_distance: f32 = lhs
+                .iter()
+                .zip(rhs.iter())
+                .map(|(a, b)| {
+                    let delta = a - b;
+                    delta * delta
+                })
+                .sum();
+            (-config.gamma * squared_distance).exp()
         }
         SvmKernel::Polynomial => {
-            for row in 0..mapped.shape()[0] {
-                for col in 0..mapped.shape()[1] {
-                    let value = mapped[[row, col]];
-                    mapped[[row, col]] = (config.gamma * value + config.coef0).powi(config.degree as i32);
-                }
-            }
-            mapped
+            let dot: f32 = lhs.iter().zip(rhs.iter()).map(|(a, b)| a * b).sum();
+            (config.gamma * dot + config.coef0).powi(config.degree as i32)
         }
         SvmKernel::Sigmoid => {
-            for row in 0..mapped.shape()[0] {
-                for col in 0..mapped.shape()[1] {
-                    let value = mapped[[row, col]];
-                    mapped[[row, col]] = (config.gamma * value + config.coef0).tanh();
-                }
-            }
-            mapped
+            let dot: f32 = lhs.iter().zip(rhs.iter()).map(|(a, b)| a * b).sum();
+            (config.gamma * dot + config.coef0).tanh()
         }
     }
+}
+
+fn kernelize(matrix: &DenseMatrix, reference: &DenseMatrix, config: &SvmConfig) -> DenseMatrix {
+    if matches!(config.kernel, SvmKernel::Linear) && std::ptr::eq(matrix, reference) {
+        return matrix.clone();
+    }
+
+    let rows = matrix.shape()[0];
+    let cols = reference.shape()[0];
+    let mut mapped = Array2::<f32>::zeros((rows, cols));
+
+    for row in 0..rows {
+        let lhs = matrix.index_axis(Axis(0), row).to_vec();
+        for col in 0..cols {
+            let rhs = reference.index_axis(Axis(0), col).to_vec();
+            mapped[[row, col]] = pairwise_kernel_value(&lhs, &rhs, config);
+        }
+    }
+
+    mapped
 }
 
 #[derive(Debug, Clone)]
@@ -48,12 +60,14 @@ pub(crate) struct LinearSvmOVR {
     bias: Array1<f32>,
     encoder: LabelEncoder,
     config: SvmConfig,
+    reference: DenseMatrix,
 }
 
 impl LinearSvmOVR {
     pub(crate) fn fit(matrix: &DenseMatrix, samples: &[TrainingSample], config: &SvmConfig, threads: Option<usize>) -> Self {
         let encoder = LabelEncoder::fit(samples);
-        let x = apply_svm_kernel_map(matrix, config);
+        let reference = matrix.clone();
+        let x = kernelize(matrix, &reference, config);
         let classes = encoder.labels.len();
         let features = x.shape()[1];
         let y_idx: Vec<usize> = samples.iter().map(|s| encoder.encode(&s.label)).collect();
@@ -98,11 +112,11 @@ impl LinearSvmOVR {
             }
             bias[class_id] = b;
         }
-        Self { weights, bias, encoder, config: config.clone() }
+        Self { weights, bias, encoder, config: config.clone(), reference }
     }
 
     pub(crate) fn predict_scores(&self, probe: &DenseMatrix) -> Vec<(ClassificationLabel, f32)> {
-        let mapped = apply_svm_kernel_map(probe, &self.config);
+        let mapped = kernelize(probe, &self.reference, &self.config);
         let row = mapped.index_axis(Axis(0), 0);
         let mut raw = Vec::new();
         for class_id in 0..self.encoder.labels.len() {

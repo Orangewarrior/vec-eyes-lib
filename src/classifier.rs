@@ -50,36 +50,7 @@ impl MethodKind {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum ClassifierMethod {
-    Bayes,
-    KnnCosine,
-    KnnEuclidean,
-    KnnManhattan,
-    KnnMinkowski,
-    LogisticRegression,
-    RandomForest,
-    IsolationForest,
-    Svm,
-    GradientBoosting,
-}
-
-impl From<MethodKind> for ClassifierMethod {
-    fn from(value: MethodKind) -> Self {
-        match value {
-            MethodKind::Bayes => Self::Bayes,
-            MethodKind::KnnCosine => Self::KnnCosine,
-            MethodKind::KnnEuclidean => Self::KnnEuclidean,
-            MethodKind::KnnManhattan => Self::KnnManhattan,
-            MethodKind::KnnMinkowski => Self::KnnMinkowski,
-            MethodKind::LogisticRegression => Self::LogisticRegression,
-            MethodKind::RandomForest => Self::RandomForest,
-            MethodKind::IsolationForest => Self::IsolationForest,
-            MethodKind::Svm => Self::Svm,
-            MethodKind::GradientBoosting => Self::GradientBoosting,
-        }
-    }
-}
+pub type ClassifierMethod = MethodKind;
 
 #[derive(Debug, Clone)]
 pub struct ClassificationResult {
@@ -225,9 +196,26 @@ impl Builder<Box<dyn Classifier>> for ClassifierBuilder {
 }
 
 impl ClassifierBuilder {
-    pub fn new() -> Self { <Self as Builder<Box<dyn Classifier>>>::new() }
 
-    pub fn build(self) -> Result<Box<dyn Classifier>, VecEyesError> { <Self as Builder<Box<dyn Classifier>>>::build(self) }
+pub fn new() -> Self {
+    Self {
+        method: None,
+        nlp: None,
+        hot_label: None,
+        cold_label: None,
+        hot_path: None,
+        cold_path: None,
+        recursive: true,
+        threads: None,
+        k: None,
+        p: None,
+        advanced: AdvancedModelConfig::default(),
+    }
+}
+
+pub fn build(self) -> Result<Box<dyn Classifier>, VecEyesError> {
+    <Self as Builder<Box<dyn Classifier>>>::build(self)
+}
 
     pub fn method(mut self, method: ClassifierMethod) -> Self {
         self.method = Some(method);
@@ -268,6 +256,16 @@ impl ClassifierBuilder {
         self.threads = threads;
         self
     }
+
+pub fn embedding_dimensions(mut self, dimensions: usize) -> Self {
+    self.advanced.embedding_dimensions = Some(dimensions.max(1));
+    self
+}
+
+pub fn advanced_config(mut self, advanced: AdvancedModelConfig) -> Self {
+    self.advanced = advanced;
+    self
+}
 
     pub fn k(mut self, k: usize) -> Self {
         self.k = Some(k);
@@ -361,64 +359,8 @@ impl ClassifierBuilder {
         self
     }
 
-    pub fn from_rules_file(mut self, rules: &RulesFile) -> Self {
-        self.method = Some(rules.method.clone().into());
-        self.nlp = Some(rules.nlp.clone());
-        self.hot_path = Some(rules.hot_test_path.clone());
-        self.cold_path = Some(rules.cold_test_path.clone());
-        self.hot_label = Some(rules.hot_label.clone().unwrap_or(ClassificationLabel::WebAttack));
-        self.cold_label = Some(rules.cold_label.clone().unwrap_or(ClassificationLabel::RawData));
-        self.recursive = rules.recursive_way.is_on();
-        self.threads = rules.threads;
-        self.k = rules.k;
-        self.p = rules.p;
-        self.advanced.logistic = match (rules.logistic_learning_rate, rules.logistic_epochs) {
-            (Some(learning_rate), Some(epochs)) => Some(LogisticRegressionConfig {
-                learning_rate,
-                epochs,
-                lambda: rules.logistic_lambda.unwrap_or(1e-3),
-            }),
-            _ => None,
-        };
-        self.advanced.random_forest = rules.random_forest_n_trees.map(|n_trees| RandomForestConfig {
-            mode: rules.random_forest_mode.clone().unwrap_or(RandomForestMode::Standard),
-            n_trees,
-            max_depth: rules.random_forest_max_depth.unwrap_or(6),
-            max_features: rules.random_forest_max_features.clone().unwrap_or(RandomForestMaxFeatures::Sqrt),
-            min_samples_split: rules.random_forest_min_samples_split.unwrap_or(2),
-            min_samples_leaf: rules.random_forest_min_samples_leaf.unwrap_or(1),
-            bootstrap: rules.random_forest_bootstrap.unwrap_or(true),
-            oob_score: rules.random_forest_oob_score.unwrap_or(false),
-        });
-        self.advanced.svm = match (rules.svm_kernel.clone(), rules.svm_c) {
-            (Some(kernel), Some(c)) => Some(SvmConfig {
-                kernel,
-                c,
-                learning_rate: rules.svm_learning_rate.unwrap_or(0.08),
-                epochs: rules.svm_epochs.unwrap_or(40),
-                gamma: rules.svm_gamma.unwrap_or(0.35),
-                degree: rules.svm_degree.unwrap_or(2),
-                coef0: rules.svm_coef0.unwrap_or(0.0),
-            }),
-            _ => None,
-        };
-        self.advanced.gradient_boosting = match (rules.gradient_boosting_n_estimators, rules.gradient_boosting_learning_rate) {
-            (Some(n_estimators), Some(learning_rate)) => Some(GradientBoostingConfig {
-                n_estimators,
-                learning_rate,
-                max_depth: rules.gradient_boosting_max_depth.unwrap_or(1),
-            }),
-            _ => None,
-        };
-        self.advanced.isolation_forest = match (rules.isolation_forest_n_trees, rules.isolation_forest_contamination) {
-            (Some(n_trees), Some(contamination)) => Some(IsolationForestConfig {
-                n_trees,
-                contamination,
-                subsample_size: rules.isolation_forest_subsample_size.unwrap_or(64),
-            }),
-            _ => None,
-        };
-        self
+    pub fn from_rules_file(self, rules: &RulesFile) -> Self {
+        rules.apply_to_builder(self)
     }
 }
 

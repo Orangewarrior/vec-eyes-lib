@@ -166,6 +166,7 @@ impl Default for IsolationForestConfig {
 #[derive(Debug, Clone, Default)]
 pub struct AdvancedModelConfig {
     pub threads: Option<usize>,
+    pub embedding_dimensions: Option<usize>,
     pub logistic: Option<LogisticRegressionConfig>,
     pub random_forest: Option<RandomForestConfig>,
     pub svm: Option<SvmConfig>,
@@ -279,9 +280,16 @@ impl LabelEncoder {
         Self { labels, to_idx }
     }
 
-    pub(crate) fn encode(&self, label: &ClassificationLabel) -> usize {
-        *self.to_idx.get(label).unwrap_or(&0)
+
+pub(crate) fn encode(&self, label: &ClassificationLabel) -> usize {
+    match self.to_idx.get(label).copied() {
+        Some(idx) => idx,
+        None => {
+            debug_assert!(false, "LabelEncoder received an unseen label during encoding: {}", label.as_str());
+            panic!("LabelEncoder received an unseen label during encoding: {}", label.as_str());
+        }
     }
+}
 
     pub(crate) fn decode(&self, idx: usize) -> ClassificationLabel {
         self.labels.get(idx).cloned().unwrap_or(ClassificationLabel::RawData)
@@ -321,7 +329,7 @@ impl AdvancedClassifier {
         cold_label: ClassificationLabel,
         config: &AdvancedModelConfig,
     ) -> Result<Self, VecEyesError> {
-        let dims = 32;
+        let dims = config.embedding_dimensions.unwrap_or(32).max(1);
         match method {
             AdvancedMethod::IsolationForest => {
                 if !matches!(nlp, NlpOption::Word2Vec | NlpOption::FastText) {

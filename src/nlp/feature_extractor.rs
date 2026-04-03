@@ -142,26 +142,12 @@ pub struct WordEmbeddingModel {
 
 impl WordEmbeddingModel {
     pub fn train_word2vec(texts: &[String], dims: usize) -> Self {
-        let mut vectors = HashMap::new();
-        for text in texts {
-            let normalized = normalize_text(text);
-            let tokens = tokenize(&normalized);
-            for token in tokens {
-                vectors.entry(token.clone()).or_insert_with(|| deterministic_vector(&token, dims));
-            }
-        }
+        let vectors = train_context_embeddings(texts, dims, None);
         Self { dims, vectors, fasttext: None }
     }
 
     pub fn train_fasttext(texts: &[String], dims: usize, config: FastTextConfig) -> Self {
-        let mut vectors = HashMap::new();
-        for text in texts {
-            let normalized = normalize_text(text);
-            let tokens = tokenize(&normalized);
-            for token in tokens {
-                vectors.entry(token.clone()).or_insert_with(|| fasttext_vector(&token, dims, &config));
-            }
-        }
+        let vectors = train_context_embeddings(texts, dims, Some(&config));
         Self { dims, vectors, fasttext: Some(config) }
     }
 
@@ -217,6 +203,68 @@ fn l2_normalize_row(matrix: &mut DenseMatrix, row: usize) {
             matrix[[row, col]] /= norm;
         }
     }
+}
+
+
+fn train_context_embeddings(
+    texts: &[String],
+    dims: usize,
+    fasttext: Option<&FastTextConfig>,
+) -> HashMap<String, Vec<f32>> {
+    let dims = dims.max(1);
+    let window = 2usize;
+    let mut vectors: HashMap<String, Vec<f32>> = HashMap::new();
+
+    for text in texts {
+        let normalized = normalize_text(text);
+        let tokens = tokenize(&normalized);
+        for (idx, token) in tokens.iter().enumerate() {
+            let entry = vectors.entry(token.clone()).or_insert_with(|| vec![0.0; dims]);
+            let start = idx.saturating_sub(window);
+            let end = (idx + window + 1).min(tokens.len());
+
+            for (ctx_idx, context) in tokens[start..end].iter().enumerate() {
+                let absolute_ctx_idx = start + ctx_idx;
+                if absolute_ctx_idx == idx {
+                    continue;
+                }
+
+                let base = if let Some(cfg) = fasttext {
+                    fasttext_vector(context, dims, cfg)
+                } else {
+                    deterministic_vector(context, dims)
+                };
+                let distance = idx.abs_diff(absolute_ctx_idx).max(1) as f32;
+                let weight = 1.0 / distance;
+
+                for dim in 0..dims {
+                    entry[dim] += base[dim] * weight;
+                }
+            }
+
+            if let Some(cfg) = fasttext {
+                let subword = fasttext_vector(token, dims, cfg);
+                for dim in 0..dims {
+                    entry[dim] += subword[dim] * 0.1;
+                }
+            }
+        }
+    }
+
+    for vector in vectors.values_mut() {
+        let mut norm = 0.0f32;
+        for value in vector.iter() {
+            norm += value * value;
+        }
+        let norm = norm.sqrt();
+        if norm > 0.0 {
+            for value in vector.iter_mut() {
+                *value /= norm;
+            }
+        }
+    }
+
+    vectors
 }
 
 fn deterministic_vector(token: &str, dims: usize) -> Vec<f32> {

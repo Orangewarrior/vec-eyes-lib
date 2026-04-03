@@ -210,26 +210,40 @@ impl RandomForestModel {
 
         let trees: Vec<TreeNode> = built.iter().map(|(tree, _)| tree.clone()).collect();
         let oob_score = if config.oob_score && config.bootstrap {
-            let mut correct = 0usize;
-            let mut seen = 0usize;
+            let mut aggregated = vec![vec![0.0f32; num_classes]; rows.len()];
+            let mut votes = vec![0usize; rows.len()];
+
             for (tree, oob_rows) in &built {
                 if let Some(rows) = oob_rows {
                     for &row_idx in rows {
                         let row = matrix.index_axis(Axis(0), row_idx).to_vec();
                         let prediction = tree.predict(&row);
-                        let best = prediction
-                            .iter()
-                            .enumerate()
-                            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-                            .map(|(idx, _)| idx)
-                            .unwrap_or(0);
-                        if best == y_idx[row_idx] {
-                            correct += 1;
+                        for (class_idx, value) in prediction.into_iter().enumerate() {
+                            aggregated[row_idx][class_idx] += value;
                         }
-                        seen += 1;
+                        votes[row_idx] += 1;
                     }
                 }
             }
+
+            let mut correct = 0usize;
+            let mut seen = 0usize;
+            for row_idx in 0..rows.len() {
+                if votes[row_idx] == 0 {
+                    continue;
+                }
+                let best = aggregated[row_idx]
+                    .iter()
+                    .enumerate()
+                    .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(0);
+                if best == y_idx[row_idx] {
+                    correct += 1;
+                }
+                seen += 1;
+            }
+
             if seen > 0 { Some(correct as f32 / seen as f32) } else { None }
         } else {
             None

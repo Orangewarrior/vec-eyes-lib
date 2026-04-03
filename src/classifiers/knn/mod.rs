@@ -78,9 +78,22 @@ impl Builder<KnnClassifier> for KnnBuilder {
 }
 
 impl KnnBuilder {
-    pub fn new() -> Self { <Self as Builder<KnnClassifier>>::new() }
 
-    pub fn build(self) -> Result<KnnClassifier, VecEyesError> { <Self as Builder<KnnClassifier>>::build(self) }
+pub fn new() -> Self {
+    Self {
+        nlp: NlpOption::Word2Vec,
+        samples: Vec::new(),
+        metric: DistanceMetric::Cosine,
+        dims: 32,
+        k: None,
+        p: None,
+        threads: None,
+    }
+}
+
+pub fn build(self) -> Result<KnnClassifier, VecEyesError> {
+    <Self as Builder<KnnClassifier>>::build(self)
+}
 
     pub fn nlp(mut self, nlp: NlpOption) -> Self {
         self.nlp = nlp;

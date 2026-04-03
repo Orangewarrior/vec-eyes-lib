@@ -1,10 +1,16 @@
-use crate::advanced_models::{RandomForestMaxFeatures, RandomForestMode, SvmKernel};
-use crate::classifier::MethodKind;
+use crate::advanced_models::{
+    AdvancedModelConfig, GradientBoostingConfig, IsolationForestConfig,
+    LogisticRegressionConfig, RandomForestConfig, RandomForestMaxFeatures, RandomForestMode,
+    SvmConfig, SvmKernel,
+};
+use crate::classifier::{ClassifierBuilder, MethodKind};
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::nlp::NlpOption;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+
+const MAX_RULES_FILE_BYTES: u64 = 512 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecursiveMode {
@@ -76,6 +82,8 @@ pub struct RulesFile {
     #[serde(default)]
     pub threads: Option<usize>,
     #[serde(default)]
+    pub embedding_dimensions: Option<usize>,
+    #[serde(default)]
     pub csv_output: Option<PathBuf>,
     #[serde(default)]
     pub json_output: Option<PathBuf>,
@@ -145,34 +153,38 @@ pub struct RulesFile {
     pub isolation_forest_subsample_size: Option<usize>,
 }
 
+fn validate_maybe_relative_path(path: &Path, allowed_base: &Path) -> Result<(), VecEyesError> {
+    if path.is_absolute() {
+        crate::security::sanitize_existing_path(path)?;
+    } else {
+        let joined = allowed_base.join(path);
+        crate::security::sanitize_existing_path_with_base(&joined, allowed_base)?;
+    }
+    Ok(())
+}
+
 impl RulesFile {
     pub fn validate(&self) -> Result<(), VecEyesError> {
         if self.threads == Some(0) {
-            return Err(VecEyesError::invalid_config("config::RulesFile::validate", "threads must be >= 1"));
+            return Err(VecEyesError::invalid_config(
+                "config::RulesFile::validate",
+                "threads must be >= 1",
+            ));
         }
 
-        if !self.hot_test_path.exists() {
-            return Err(VecEyesError::InvalidConfig(format!(
-                "hot_test_path does not exist: {}",
-                self.hot_test_path.display()
-            )));
+        if self.embedding_dimensions == Some(0) {
+            return Err(VecEyesError::InvalidConfig(
+                "YAML validation error: embedding_dimensions must be >= 1".into(),
+            ));
         }
 
-        if !self.cold_test_path.exists() {
-            return Err(VecEyesError::InvalidConfig(format!(
-                "cold_test_path does not exist: {}",
-                self.cold_test_path.display()
-            )));
-        }
-
-        for extra in &self.extra_match {
-            if !extra.path.exists() {
-                return Err(VecEyesError::InvalidConfig(format!(
-                    "extra_match path does not exist: {}",
-                    extra.path.display()
-                )));
-            }
-        }
+        let allowed_base = std::env::current_dir().map_err(|e| {
+            VecEyesError::invalid_config(
+                "config::RulesFile::validate",
+                format!("failed to resolve current working directory: {e}"),
+            )
+        })?;
+        self.validate_paths_against(&allowed_base)?;
 
         if self.method.is_knn() {
             let k = self.k.ok_or_else(|| {
@@ -232,7 +244,9 @@ impl RulesFile {
                         ));
                     }
                 }
-                if self.random_forest_oob_score == Some(true) && self.random_forest_bootstrap == Some(false) {
+                if self.random_forest_oob_score == Some(true)
+                    && self.random_forest_bootstrap == Some(false)
+                {
                     return Err(VecEyesError::InvalidConfig(
                         "YAML validation error: random_forest_oob_score requires random_forest_bootstrap = true".into(),
                     ));
@@ -251,7 +265,10 @@ impl RulesFile {
                     ));
                 }
                 match kernel {
-                    SvmKernel::Linear | SvmKernel::Rbf | SvmKernel::Polynomial | SvmKernel::Sigmoid => {}
+                    SvmKernel::Linear
+                    | SvmKernel::Rbf
+                    | SvmKernel::Polynomial
+                    | SvmKernel::Sigmoid => {}
                 }
             }
             MethodKind::GradientBoosting => {
@@ -286,16 +303,130 @@ impl RulesFile {
         Ok(())
     }
 
-    /// Loads a YAML rules file from disk and validates it before returning it.
+    pub fn validate_paths_against(&self, allowed_base: &Path) -> Result<(), VecEyesError> {
+        validate_maybe_relative_path(&self.hot_test_path, allowed_base)?;
+        validate_maybe_relative_path(&self.cold_test_path, allowed_base)?;
+        for extra in &self.extra_match {
+            validate_maybe_relative_path(&extra.path, allowed_base)?;
+        }
+        Ok(())
+    }
+
+    pub fn advanced_model_config(&self) -> AdvancedModelConfig {
+        AdvancedModelConfig {
+            threads: self.threads,
+            embedding_dimensions: self.embedding_dimensions,
+            logistic: match (self.logistic_learning_rate, self.logistic_epochs) {
+                (Some(learning_rate), Some(epochs)) => Some(LogisticRegressionConfig {
+                    learning_rate,
+                    epochs,
+                    lambda: self.logistic_lambda.unwrap_or(1e-3),
+                }),
+                _ => None,
+            },
+            random_forest: self.random_forest_n_trees.map(|n_trees| RandomForestConfig {
+                mode: self.random_forest_mode.clone().unwrap_or(RandomForestMode::Standard),
+                n_trees,
+                max_depth: self.random_forest_max_depth.unwrap_or(6),
+                max_features: self
+                    .random_forest_max_features
+                    .clone()
+                    .unwrap_or(RandomForestMaxFeatures::Sqrt),
+                min_samples_split: self.random_forest_min_samples_split.unwrap_or(2),
+                min_samples_leaf: self.random_forest_min_samples_leaf.unwrap_or(1),
+                bootstrap: self.random_forest_bootstrap.unwrap_or(true),
+                oob_score: self.random_forest_oob_score.unwrap_or(false),
+            }),
+            svm: match (self.svm_kernel.clone(), self.svm_c) {
+                (Some(kernel), Some(c)) => Some(SvmConfig {
+                    kernel,
+                    c,
+                    learning_rate: self.svm_learning_rate.unwrap_or(0.08),
+                    epochs: self.svm_epochs.unwrap_or(40),
+                    gamma: self.svm_gamma.unwrap_or(0.35),
+                    degree: self.svm_degree.unwrap_or(2),
+                    coef0: self.svm_coef0.unwrap_or(0.0),
+                }),
+                _ => None,
+            },
+            gradient_boosting: match (
+                self.gradient_boosting_n_estimators,
+                self.gradient_boosting_learning_rate,
+            ) {
+                (Some(n_estimators), Some(learning_rate)) => Some(GradientBoostingConfig {
+                    n_estimators,
+                    learning_rate,
+                    max_depth: self.gradient_boosting_max_depth.unwrap_or(1),
+                }),
+                _ => None,
+            },
+            isolation_forest: match (
+                self.isolation_forest_n_trees,
+                self.isolation_forest_contamination,
+            ) {
+                (Some(n_trees), Some(contamination)) => Some(IsolationForestConfig {
+                    n_trees,
+                    contamination,
+                    subsample_size: self.isolation_forest_subsample_size.unwrap_or(64),
+                }),
+                _ => None,
+            },
+        }
+    }
+
+    pub fn apply_to_builder(&self, mut builder: ClassifierBuilder) -> ClassifierBuilder {
+        builder = builder
+            .method(self.method.clone())
+            .nlp(self.nlp.clone())
+            .hot_path(self.hot_test_path.clone())
+            .cold_path(self.cold_test_path.clone())
+            .hot_label(self.hot_label.clone().unwrap_or(ClassificationLabel::WebAttack))
+            .cold_label(self.cold_label.clone().unwrap_or(ClassificationLabel::RawData))
+            .recursive(self.recursive_way.is_on())
+            .threads(self.threads)
+            .embedding_dimensions(self.embedding_dimensions.unwrap_or(32));
+        if let Some(k) = self.k {
+            builder = builder.k(k);
+        }
+        if let Some(p) = self.p {
+            builder = builder.p(p);
+        }
+        builder.advanced_config(self.advanced_model_config())
+    }
+
     pub fn from_yaml_path<P: AsRef<Path>>(path: P) -> Result<Self, VecEyesError> {
+        let metadata = std::fs::metadata(&path)?;
+        if metadata.len() > MAX_RULES_FILE_BYTES {
+            return Err(VecEyesError::invalid_config(
+                "config::RulesFile::from_yaml_path",
+                format!(
+                    "rules file {} exceeds the maximum allowed size of {} bytes",
+                    path.as_ref().display(),
+                    MAX_RULES_FILE_BYTES
+                ),
+            ));
+        }
+
         let content = std::fs::read_to_string(&path)?;
         let value: serde_yaml::Value = serde_yaml::from_str(&content)?;
         if !matches!(value, serde_yaml::Value::Mapping(_)) {
-            return Err(VecEyesError::invalid_config("config::RulesFile::from_yaml_path", format!("expected a YAML mapping at root for {}", path.as_ref().display())));
+            return Err(VecEyesError::invalid_config(
+                "config::RulesFile::from_yaml_path",
+                format!(
+                    "expected a YAML mapping at root for {}",
+                    path.as_ref().display()
+                ),
+            ));
         }
         let rules: Self = serde_yaml::from_value(value)?;
+        let allowed_base = std::env::current_dir().map_err(|e| {
+            VecEyesError::invalid_config(
+                "config::RulesFile::from_yaml_path",
+                format!("failed to resolve current working directory: {e}"),
+            )
+        })?;
+        rules.validate_paths_against(&allowed_base)?;
         rules.validate()?;
         Ok(rules)
     }
-
 }

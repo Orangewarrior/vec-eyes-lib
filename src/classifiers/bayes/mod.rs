@@ -77,6 +77,9 @@ pub struct BayesClassifier {
     labels: Vec<ClassificationLabel>,
     token_scores: HashMap<ClassificationLabel, HashMap<String, f32>>,
     priors: HashMap<ClassificationLabel, f32>,
+    token_totals: HashMap<ClassificationLabel, f32>,
+    vocab_size: usize,
+    alpha: f32,
     tfidf: Option<TfIdfModel>,
 }
 
@@ -87,9 +90,12 @@ impl BayesClassifier {
         labels: Vec<ClassificationLabel>,
         token_scores: HashMap<ClassificationLabel, HashMap<String, f32>>,
         priors: HashMap<ClassificationLabel, f32>,
+        token_totals: HashMap<ClassificationLabel, f32>,
+        vocab_size: usize,
+        alpha: f32,
         tfidf: Option<TfIdfModel>,
     ) -> Self {
-        Self { nlp, threads, labels, token_scores, priors, tfidf }
+        Self { nlp, threads, labels, token_scores, priors, token_totals, vocab_size, alpha, tfidf }
     }
 
     pub(crate) fn nlp_option(&self) -> NlpOption { self.nlp.clone() }
@@ -97,6 +103,9 @@ impl BayesClassifier {
     pub(crate) fn labels(&self) -> &Vec<ClassificationLabel> { &self.labels }
     pub(crate) fn token_scores(&self) -> &HashMap<ClassificationLabel, HashMap<String, f32>> { &self.token_scores }
     pub(crate) fn priors(&self) -> &HashMap<ClassificationLabel, f32> { &self.priors }
+    pub(crate) fn token_totals(&self) -> &HashMap<ClassificationLabel, f32> { &self.token_totals }
+    pub(crate) fn vocab_size(&self) -> usize { self.vocab_size }
+    pub(crate) fn alpha(&self) -> f32 { self.alpha }
     pub(crate) fn tfidf_model(&self) -> Option<&TfIdfModel> { self.tfidf.as_ref() }
 
     pub fn train(samples: &[TrainingSample], nlp: NlpOption, threads: Option<usize>) -> Result<Self, VecEyesError> {

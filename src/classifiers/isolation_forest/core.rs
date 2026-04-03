@@ -40,7 +40,7 @@ fn build_isolation_tree(x: &DenseMatrix, rows: &[usize], depth: usize, max_depth
         return IsolationNode::leaf(rows.len());
     }
     let cols = x.shape()[1];
-    let feature = rng.gen_range(0..cols);
+    let feature = rng.random_range(0..cols);
     let mut min_v = f32::INFINITY;
     let mut max_v = f32::NEG_INFINITY;
     for &row in rows {
@@ -51,7 +51,7 @@ fn build_isolation_tree(x: &DenseMatrix, rows: &[usize], depth: usize, max_depth
     if (max_v - min_v).abs() < 1e-6 {
         return IsolationNode::leaf(rows.len());
     }
-    let threshold = rng.gen_range(min_v..max_v);
+    let threshold = rng.random_range(min_v..max_v);
     let mut left_rows = Vec::new();
     let mut right_rows = Vec::new();
     for &row in rows {
@@ -73,6 +73,8 @@ fn build_isolation_tree(x: &DenseMatrix, rows: &[usize], depth: usize, max_depth
 pub(crate) struct IsolationForestModel {
     trees: Vec<IsolationNode>,
     threshold: f32,
+    score_mean: f32,
+    score_std: f32,
     anomaly_label: ClassificationLabel,
     normal_label: ClassificationLabel,
     subsample_size: usize,
@@ -88,7 +90,7 @@ impl IsolationForestModel {
                 .map(|seed| {
                     let mut rng = StdRng::seed_from_u64(0xBADC0DE + seed as u64 * 13);
                     let sample_size = rows.len().min(subsample_size.max(8));
-                    let subset: Vec<usize> = (0..sample_size).map(|_| rows[rng.gen_range(0..rows.len())]).collect();
+                    let subset: Vec<usize> = (0..sample_size).map(|_| rows[rng.random_range(0..rows.len())]).collect();
                     build_isolation_tree(cold_matrix, &subset, 0, max_depth, &mut rng)
                 })
                 .collect()
@@ -109,8 +111,18 @@ impl IsolationForestModel {
         scores.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let pos = ((scores.len() as f32) * (1.0 - contamination.clamp(0.001, 0.49))).floor() as usize;
         let threshold = scores.get(pos.min(scores.len().saturating_sub(1))).copied().unwrap_or(0.6).max(0.55);
+        let score_mean = if scores.is_empty() { threshold } else { scores.iter().sum::<f32>() / scores.len() as f32 };
+        let variance = if scores.is_empty() {
+            1e-6
+        } else {
+            scores.iter().map(|score| {
+                let delta = *score - score_mean;
+                delta * delta
+            }).sum::<f32>() / scores.len() as f32
+        };
+        let score_std = variance.sqrt().max(1e-6);
 
-        Self { trees, threshold, anomaly_label, normal_label, subsample_size }
+        Self { trees, threshold, score_mean, score_std, anomaly_label, normal_label, subsample_size }
     }
 
     pub(crate) fn predict_scores(&self, probe: &DenseMatrix) -> Vec<(ClassificationLabel, f32)> {
@@ -122,11 +134,13 @@ impl IsolationForestModel {
         }
         let avg_path = path_sum / self.trees.len().max(1) as f32;
         let score = 2f32.powf(-avg_path / avg_c);
-        let anomaly_pct = ((score / self.threshold.max(1e-6)).min(1.5) * 100.0).min(100.0);
-        let normal_pct = (100.0 - anomaly_pct).max(0.0);
+        let z = (score - self.score_mean) / self.score_std;
+        let threshold_z = (self.threshold - self.score_mean) / self.score_std;
+        let anomaly_prob = 1.0 / (1.0 + (-(z - threshold_z)).exp());
+        let normal_prob = (1.0 - anomaly_prob).max(1e-6);
         let raw = vec![
-            (self.anomaly_label.clone(), anomaly_pct.max(1e-6).ln()),
-            (self.normal_label.clone(), normal_pct.max(1e-6).ln()),
+            (self.anomaly_label.clone(), anomaly_prob.max(1e-6).ln()),
+            (self.normal_label.clone(), normal_prob.ln()),
         ];
         softmax_scores(&raw)
     }

@@ -1,9 +1,8 @@
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ClassificationLabel {
     Spam,
     Malware,
@@ -22,10 +21,11 @@ pub enum ClassificationLabel {
     Fungus,
     Bacteria,
     Free,
+    Custom(String),
 }
 
 impl ClassificationLabel {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::Spam => "SPAM",
             Self::Malware => "MALWARE",
@@ -44,6 +44,7 @@ impl ClassificationLabel {
             Self::Fungus => "FUNGUS",
             Self::Bacteria => "BACTERIA",
             Self::Free => "FREE",
+            Self::Custom(value) => value.as_str(),
         }
     }
 }
@@ -58,25 +59,44 @@ impl FromStr for ClassificationLabel {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_uppercase().as_str() {
-            "SPAM" => Ok(Self::Spam),
-            "MALWARE" => Ok(Self::Malware),
-            "PHISHING" => Ok(Self::Phishing),
-            "ANOMALY" => Ok(Self::Anomaly),
-            "FUZZING" => Ok(Self::Fuzzing),
-            "WEB_ATTACK" => Ok(Self::WebAttack),
-            "FLOOD" => Ok(Self::Flood),
-            "PORN" => Ok(Self::Porn),
-            "RAW_DATA" => Ok(Self::RawData),
-            "BLOCK_LIST" => Ok(Self::BlockList),
-            "VIRUS" => Ok(Self::Virus),
-            "HUMAN" => Ok(Self::Human),
-            "ANIMAL" => Ok(Self::Animal),
-            "CANCER" => Ok(Self::Cancer),
-            "FUNGUS" => Ok(Self::Fungus),
-            "BACTERIA" => Ok(Self::Bacteria),
-            "FREE" => Ok(Self::Free),
-            _ => Err(()),
-        }
+        Ok(match s.to_ascii_uppercase().as_str() {
+            "SPAM" => Self::Spam,
+            "MALWARE" => Self::Malware,
+            "PHISHING" => Self::Phishing,
+            "ANOMALY" => Self::Anomaly,
+            "FUZZING" => Self::Fuzzing,
+            "WEB_ATTACK" => Self::WebAttack,
+            "FLOOD" => Self::Flood,
+            "PORN" => Self::Porn,
+            "RAW_DATA" => Self::RawData,
+            "BLOCK_LIST" => Self::BlockList,
+            "VIRUS" => Self::Virus,
+            "HUMAN" => Self::Human,
+            "ANIMAL" => Self::Animal,
+            "CANCER" => Self::Cancer,
+            "FUNGUS" => Self::Fungus,
+            "BACTERIA" => Self::Bacteria,
+            "FREE" => Self::Free,
+            _ => Self::Custom(s.to_string()),
+        })
+    }
+}
+
+impl Serialize for ClassificationLabel {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ClassificationLabel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        ClassificationLabel::from_str(&value).map_err(|_| de::Error::custom("invalid label"))
     }
 }

@@ -60,6 +60,9 @@ pub(crate) fn base_scores(model: &BayesClassifier, text: &str) -> Vec<(Classific
     } else {
         None
     };
+    // Out-of-vocabulary tokens are intentionally treated as unseen terms.
+    // The model persists only vocab_size for Laplace smoothing, so OOV inputs
+    // contribute through the smoothed denominator instead of requiring a stored vocabulary map.
     let vocab_size = model.vocab_size() as f32;
     let alpha = model.alpha();
 

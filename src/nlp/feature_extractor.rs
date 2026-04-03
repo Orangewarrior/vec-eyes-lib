@@ -68,7 +68,6 @@ pub struct TfIdfModel {
 
 pub fn fit_tfidf(texts: &[String]) -> TfIdfModel {
     let mut df: HashMap<String, usize> = HashMap::new();
-    let mut docs_tokens: Vec<Vec<String>> = Vec::new();
 
     for text in texts {
         let normalized = normalize_text(text);
@@ -79,7 +78,6 @@ pub fn fit_tfidf(texts: &[String]) -> TfIdfModel {
                 *df.entry(token.clone()).or_insert(0) += 1;
             }
         }
-        docs_tokens.push(tokens);
     }
 
     let mut vocab: Vec<String> = df.keys().cloned().collect();
@@ -213,50 +211,64 @@ fn train_context_embeddings(
 ) -> HashMap<String, Vec<f32>> {
     let dims = dims.max(1);
     let window = 2usize;
+    let negative_samples = 2usize;
+    let epochs = 6usize;
+    let learning_rate = 0.05f32;
     let mut vectors: HashMap<String, Vec<f32>> = HashMap::new();
+    let mut corpus: Vec<Vec<String>> = Vec::new();
+    let mut vocab = HashSet::new();
 
     for text in texts {
         let normalized = normalize_text(text);
         let tokens = tokenize(&normalized);
-        for (idx, token) in tokens.iter().enumerate() {
-            let entry = vectors.entry(token.clone()).or_insert_with(|| vec![0.0; dims]);
-            let start = idx.saturating_sub(window);
-            let end = (idx + window + 1).min(tokens.len());
-
-            for (ctx_idx, context) in tokens[start..end].iter().enumerate() {
-                let absolute_ctx_idx = start + ctx_idx;
-                if absolute_ctx_idx == idx {
-                    continue;
-                }
-
-                let base = if let Some(cfg) = fasttext {
-                    fasttext_vector(context, dims, cfg)
-                } else {
-                    deterministic_vector(context, dims)
-                };
-                let distance = idx.abs_diff(absolute_ctx_idx).max(1) as f32;
-                let weight = 1.0 / distance;
-
-                for dim in 0..dims {
-                    entry[dim] += base[dim] * weight;
-                }
+        if !tokens.is_empty() {
+            for token in &tokens {
+                vocab.insert(token.clone());
+                vectors.entry(token.clone()).or_insert_with(|| deterministic_vector(token, dims));
             }
+            corpus.push(tokens);
+        }
+    }
 
-            if let Some(cfg) = fasttext {
-                let subword = fasttext_vector(token, dims, cfg);
-                for dim in 0..dims {
-                    entry[dim] += subword[dim] * 0.1;
+    let vocab_list: Vec<String> = vocab.into_iter().collect();
+    if vocab_list.is_empty() {
+        return vectors;
+    }
+
+    for _ in 0..epochs {
+        for tokens in &corpus {
+            for (idx, token) in tokens.iter().enumerate() {
+                let start = idx.saturating_sub(window);
+                let end = (idx + window + 1).min(tokens.len());
+                for (ctx_idx, context) in tokens[start..end].iter().enumerate() {
+                    let absolute_ctx_idx = start + ctx_idx;
+                    if absolute_ctx_idx == idx {
+                        continue;
+                    }
+                    update_skipgram_pair(&mut vectors, token, context, dims, learning_rate, 1.0);
+                    for neg in 0..negative_samples {
+                        let neg_idx = (stable_hash(token) as usize + absolute_ctx_idx + neg) % vocab_list.len();
+                        let negative = &vocab_list[neg_idx];
+                        if negative != context {
+                            update_skipgram_pair(&mut vectors, token, negative, dims, learning_rate * 0.5, 0.0);
+                        }
+                    }
                 }
             }
         }
     }
 
-    for vector in vectors.values_mut() {
-        let mut norm = 0.0f32;
-        for value in vector.iter() {
-            norm += value * value;
+    if let Some(cfg) = fasttext {
+        for (token, vector) in vectors.iter_mut() {
+            let subword = fasttext_vector(token, dims, cfg);
+            for dim in 0..dims {
+                vector[dim] += subword[dim] * 0.15;
+            }
         }
-        let norm = norm.sqrt();
+    }
+
+    for vector in vectors.values_mut() {
+        let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
         if norm > 0.0 {
             for value in vector.iter_mut() {
                 *value /= norm;
@@ -265,6 +277,37 @@ fn train_context_embeddings(
     }
 
     vectors
+}
+
+fn update_skipgram_pair(
+    vectors: &mut HashMap<String, Vec<f32>>,
+    center: &str,
+    context: &str,
+    dims: usize,
+    learning_rate: f32,
+    target: f32,
+) {
+    let center_vec = vectors.get(center).cloned().unwrap_or_else(|| deterministic_vector(center, dims));
+    let context_vec = vectors.get(context).cloned().unwrap_or_else(|| deterministic_vector(context, dims));
+    let dot = center_vec.iter().zip(context_vec.iter()).map(|(a, b)| a * b).sum::<f32>();
+    let pred = 1.0 / (1.0 + (-dot).exp());
+    let error = target - pred;
+
+    let mut new_center = center_vec.clone();
+    let mut new_context = context_vec.clone();
+    for dim in 0..dims {
+        new_center[dim] += learning_rate * error * context_vec[dim];
+        new_context[dim] += learning_rate * error * center_vec[dim];
+    }
+    vectors.insert(center.to_string(), new_center);
+    vectors.insert(context.to_string(), new_context);
+}
+
+fn stable_hash(token: &str) -> u64 {
+    token
+        .as_bytes()
+        .iter()
+        .fold(0u64, |acc, b| acc.wrapping_mul(131).wrapping_add(*b as u64 + 17))
 }
 
 fn deterministic_vector(token: &str, dims: usize) -> Vec<f32> {

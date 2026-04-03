@@ -5,6 +5,9 @@ use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+const MAX_RULES_PER_RULESET: usize = 10_000;
+const MAX_TEXT_RULE_LINE_LEN: usize = 2048;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRule {
     pub title: String,
@@ -162,6 +165,12 @@ impl RuleSet {
                 rules.extend(load_rules_from_single_file(&file, score, title.clone(), description.clone())?);
             }
         }
+        if rules.len() > MAX_RULES_PER_RULESET {
+            return Err(VecEyesError::invalid_config(
+                "matcher::RuleSet::from_rule_path",
+                format!("compiled {} rules which exceeds MAX_RULES_PER_RULESET={}", rules.len(), MAX_RULES_PER_RULESET),
+            ));
+        }
         Ok(Self { rules })
     }
 }
@@ -194,6 +203,13 @@ fn load_rules_from_single_file(
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
+        }
+
+        if trimmed.len() > MAX_TEXT_RULE_LINE_LEN {
+            return Err(VecEyesError::invalid_config(
+                "matcher::load_rules_from_single_file",
+                format!("rule line in {} exceeds {} bytes", path.display(), MAX_TEXT_RULE_LINE_LEN),
+            ));
         }
 
         rules.push(MatchRule {

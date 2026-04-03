@@ -48,12 +48,12 @@ pub(crate) fn score_neighbors(model: &KnnClassifier, text: &str) -> Vec<(Classif
             .into_par_iter()
             .map(|row| {
                 let candidate = model.matrix().index_axis(Axis(0), row);
-                let candidate_vec = candidate.to_vec();
+                let candidate_slice = candidate.as_slice().unwrap_or(&[]);
                 let distance = match model.metric() {
-                    DistanceMetric::Cosine => cosine_distance(&probe_vec, &candidate_vec),
-                    DistanceMetric::Euclidean => euclidean_distance(&probe_vec, &candidate_vec),
-                    DistanceMetric::Manhattan => manhattan_distance(&probe_vec, &candidate_vec),
-                    DistanceMetric::Minkowski(p) => minkowski_distance(&probe_vec, &candidate_vec, *p),
+                    DistanceMetric::Cosine => cosine_distance(&probe_vec, candidate_slice),
+                    DistanceMetric::Euclidean => euclidean_distance(&probe_vec, candidate_slice),
+                    DistanceMetric::Manhattan => manhattan_distance(&probe_vec, candidate_slice),
+                    DistanceMetric::Minkowski(p) => minkowski_distance(&probe_vec, candidate_slice, *p),
                 };
                 (distance, model.labels()[row].clone())
             })

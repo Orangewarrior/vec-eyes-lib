@@ -84,6 +84,8 @@ pub struct RulesFile {
     #[serde(default)]
     pub embedding_dimensions: Option<usize>,
     #[serde(default)]
+    pub security_normalize_obfuscation: Option<bool>,
+    #[serde(default)]
     pub csv_output: Option<PathBuf>,
     #[serde(default)]
     pub json_output: Option<PathBuf>,
@@ -126,6 +128,8 @@ pub struct RulesFile {
     #[serde(default)]
     pub random_forest_oob_score: Option<bool>,
     #[serde(default)]
+    pub random_forest_seed: Option<u64>,
+    #[serde(default)]
     pub svm_kernel: Option<SvmKernel>,
     #[serde(default)]
     pub svm_c: Option<f32>,
@@ -156,10 +160,18 @@ pub struct RulesFile {
 fn validate_maybe_relative_path(path: &Path, allowed_base: &Path) -> Result<(), VecEyesError> {
     if path.is_absolute() {
         crate::security::sanitize_existing_path(path)?;
-    } else {
-        let joined = allowed_base.join(path);
-        crate::security::sanitize_existing_path_with_base(&joined, allowed_base)?;
+        return Ok(());
     }
+
+    let current_dir = std::env::current_dir()?;
+    let cwd_candidate = current_dir.join(path);
+    if cwd_candidate.exists() {
+        crate::security::sanitize_existing_path_with_base(&cwd_candidate, &current_dir)?;
+        return Ok(());
+    }
+
+    let base_candidate = allowed_base.join(path);
+    crate::security::sanitize_existing_path_with_base(&base_candidate, allowed_base)?;
     Ok(())
 }
 
@@ -178,13 +190,15 @@ impl RulesFile {
             ));
         }
 
-        let allowed_base = std::env::current_dir().map_err(|e| {
-            VecEyesError::invalid_config(
-                "config::RulesFile::validate",
-                format!("failed to resolve current working directory: {e}"),
-            )
-        })?;
-        self.validate_paths_against(&allowed_base)?;
+        for extra in &self.extra_match {
+            if extra.score_add_points < 0.0 {
+                return Err(VecEyesError::invalid_config(
+                    "config::RulesFile::validate",
+                    format!("extra_match score_add_points must be >= 0.0 for {}", extra.path.display()),
+                ));
+            }
+        }
+
 
         if self.method.is_knn() {
             let k = self.k.ok_or_else(|| {
@@ -312,8 +326,12 @@ impl RulesFile {
         Ok(())
     }
 
-    pub fn advanced_model_config(&self) -> AdvancedModelConfig {
-        AdvancedModelConfig {
+    pub fn validate_with_base(&self, allowed_base: &Path) -> Result<(), VecEyesError> {
+        self.validate_paths_against(allowed_base)?;
+        self.validate()
+    }
+
+    pub fn advanced_model_config(&self) -> AdvancedModelConfig {        AdvancedModelConfig {
             threads: self.threads,
             embedding_dimensions: self.embedding_dimensions,
             logistic: match (self.logistic_learning_rate, self.logistic_epochs) {
@@ -336,6 +354,7 @@ impl RulesFile {
                 min_samples_leaf: self.random_forest_min_samples_leaf.unwrap_or(1),
                 bootstrap: self.random_forest_bootstrap.unwrap_or(true),
                 oob_score: self.random_forest_oob_score.unwrap_or(false),
+                random_seed: self.random_forest_seed,
             }),
             svm: match (self.svm_kernel.clone(), self.svm_c) {
                 (Some(kernel), Some(c)) => Some(SvmConfig {
@@ -375,6 +394,7 @@ impl RulesFile {
     }
 
     pub fn apply_to_builder(&self, mut builder: ClassifierBuilder) -> ClassifierBuilder {
+        crate::nlp::set_security_normalization_enabled(self.security_normalize_obfuscation.unwrap_or(false));
         builder = builder
             .method(self.method.clone())
             .nlp(self.nlp.clone())
@@ -395,10 +415,27 @@ impl RulesFile {
     }
 
     pub fn from_yaml_path<P: AsRef<Path>>(path: P) -> Result<Self, VecEyesError> {
+        let path_ref = path.as_ref();
+        let resolved_path = if path_ref.is_absolute() {
+            path_ref.to_path_buf()
+        } else {
+            std::env::current_dir()?.join(path_ref)
+        };
+        let allowed_base = resolved_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        Self::from_yaml_path_with_base(&resolved_path, &allowed_base)
+    }
+
+    pub fn from_yaml_path_with_base<P: AsRef<Path>>(
+        path: P,
+        allowed_base: &Path,
+    ) -> Result<Self, VecEyesError> {
         let metadata = std::fs::metadata(&path)?;
         if metadata.len() > MAX_RULES_FILE_BYTES {
             return Err(VecEyesError::invalid_config(
-                "config::RulesFile::from_yaml_path",
+                "config::RulesFile::from_yaml_path_with_base",
                 format!(
                     "rules file {} exceeds the maximum allowed size of {} bytes",
                     path.as_ref().display(),
@@ -411,7 +448,7 @@ impl RulesFile {
         let value: serde_yaml::Value = serde_yaml::from_str(&content)?;
         if !matches!(value, serde_yaml::Value::Mapping(_)) {
             return Err(VecEyesError::invalid_config(
-                "config::RulesFile::from_yaml_path",
+                "config::RulesFile::from_yaml_path_with_base",
                 format!(
                     "expected a YAML mapping at root for {}",
                     path.as_ref().display()
@@ -419,14 +456,7 @@ impl RulesFile {
             ));
         }
         let rules: Self = serde_yaml::from_value(value)?;
-        let allowed_base = std::env::current_dir().map_err(|e| {
-            VecEyesError::invalid_config(
-                "config::RulesFile::from_yaml_path",
-                format!("failed to resolve current working directory: {e}"),
-            )
-        })?;
-        rules.validate_paths_against(&allowed_base)?;
-        rules.validate()?;
+        rules.validate_with_base(allowed_base)?;
         Ok(rules)
     }
 }

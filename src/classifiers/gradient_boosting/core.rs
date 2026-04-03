@@ -1,9 +1,11 @@
 use ndarray::Axis;
 use rayon::prelude::*;
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 
 use crate::advanced_models::LabelEncoder;
 use crate::classifier::softmax_scores;
 use crate::dataset::TrainingSample;
+use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::nlp::DenseMatrix;
 use crate::parallel::install_pool;
@@ -27,16 +29,22 @@ fn fit_regression_stump(x: &DenseMatrix, residual: &[f32]) -> RegStump {
     let cols = x.shape()[1];
     let mut best = RegStump { feature: 0, threshold: 0.0, left_value: 0.0, right_value: 0.0 };
     let mut best_loss = f32::INFINITY;
+    let mut rng = StdRng::seed_from_u64(0x51A7E);
 
     for feature in 0..cols {
-        let mut values: Vec<f32> = (0..rows).map(|r| x[[r, feature]]).collect();
-        values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        values.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
-        if values.len() > 12 {
-            let step = values.len() / 12;
-            values = values.into_iter().step_by(step.max(1)).collect();
+        let min_v = (0..rows).map(|r| x[[r, feature]]).fold(f32::INFINITY, f32::min);
+        let max_v = (0..rows).map(|r| x[[r, feature]]).fold(f32::NEG_INFINITY, f32::max);
+        if !min_v.is_finite() || !max_v.is_finite() || (max_v - min_v).abs() < 1e-6 {
+            continue;
         }
-        for threshold in values {
+        let candidates = 12usize.min(rows.max(1));
+        let thresholds: Vec<f32> = (0..candidates)
+            .map(|idx| {
+                let jitter = rng.random_range(0.0..1.0);
+                min_v + ((idx as f32 + jitter) / candidates as f32) * (max_v - min_v)
+            })
+            .collect();
+        for threshold in thresholds {
             let mut left = Vec::new();
             let mut right = Vec::new();
             for row in 0..rows {
@@ -107,9 +115,9 @@ pub(crate) struct GradientBoostingModel {
 }
 
 impl GradientBoostingModel {
-    pub(crate) fn fit(matrix: &DenseMatrix, samples: &[TrainingSample], rounds: usize, learning_rate: f32, threads: Option<usize>) -> Self {
+    pub(crate) fn fit(matrix: &DenseMatrix, samples: &[TrainingSample], rounds: usize, learning_rate: f32, threads: Option<usize>) -> Result<Self, VecEyesError> {
         let encoder = LabelEncoder::fit(samples);
-        let y_idx: Vec<usize> = samples.iter().map(|s| encoder.encode(&s.label)).collect();
+        let y_idx: Vec<usize> = samples.iter().map(|s| encoder.encode(&s.label)).collect::<Result<_, _>>()?;
         let models: Vec<BinaryGradientBoosting> = install_pool(threads, || {
             (0..encoder.labels.len())
                 .into_par_iter()
@@ -119,7 +127,7 @@ impl GradientBoostingModel {
                 })
                 .collect()
         });
-        Self { encoder, models }
+        Ok(Self { encoder, models })
     }
 
     pub(crate) fn predict_scores(&self, probe: &DenseMatrix) -> Vec<(ClassificationLabel, f32)> {

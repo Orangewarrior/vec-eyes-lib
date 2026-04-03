@@ -4,6 +4,7 @@ use rayon::prelude::*;
 use crate::advanced_models::LabelEncoder;
 use crate::classifier::softmax_scores;
 use crate::dataset::TrainingSample;
+use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::nlp::DenseMatrix;
 use crate::parallel::install_pool;
@@ -16,12 +17,23 @@ pub(crate) struct LogisticOVR {
 }
 
 impl LogisticOVR {
-    pub(crate) fn fit(matrix: &DenseMatrix, samples: &[TrainingSample], epochs: usize, lr: f32, lambda: f32, threads: Option<usize>) -> Self {
+    pub(crate) fn fit(
+        matrix: &DenseMatrix,
+        samples: &[TrainingSample],
+        epochs: usize,
+        lr: f32,
+        lambda: f32,
+        threads: Option<usize>,
+    ) -> Result<Self, VecEyesError> {
         let encoder = LabelEncoder::fit(samples);
         let classes = encoder.labels.len();
         let features = matrix.shape()[1];
         let x = matrix.clone();
-        let y_idx: Vec<usize> = samples.iter().map(|s| encoder.encode(&s.label)).collect();
+        let y_idx: Vec<usize> = samples
+            .iter()
+            .map(|s| encoder.encode(&s.label))
+            .collect::<Result<_, _>>()?;
+        let batch_size = 64usize.min(x.shape()[0].max(1));
 
         let models: Vec<(Vec<f32>, f32)> = install_pool(threads, || {
             (0..classes)
@@ -30,27 +42,32 @@ impl LogisticOVR {
                     let mut w = vec![0.0f32; features];
                     let mut b = 0.0f32;
                     for _ in 0..epochs {
-                        let mut grad_w = vec![0.0f32; features];
-                        let mut grad_b = 0.0f32;
-                        for row in 0..x.shape()[0] {
-                            let y = if y_idx[row] == class_id { 1.0 } else { 0.0 };
-                            let mut z = b;
-                            for col in 0..features {
-                                z += x[[row, col]] * w[col];
+                        let mut start = 0usize;
+                        while start < x.shape()[0] {
+                            let end = (start + batch_size).min(x.shape()[0]);
+                            let mut grad_w = vec![0.0f32; features];
+                            let mut grad_b = 0.0f32;
+                            for row in start..end {
+                                let y = if y_idx[row] == class_id { 1.0 } else { 0.0 };
+                                let mut z = b;
+                                for col in 0..features {
+                                    z += x[[row, col]] * w[col];
+                                }
+                                let pred = 1.0 / (1.0 + (-z).exp());
+                                let diff = pred - y;
+                                for col in 0..features {
+                                    grad_w[col] += diff * x[[row, col]];
+                                }
+                                grad_b += diff;
                             }
-                            let pred = 1.0 / (1.0 + (-z).exp());
-                            let diff = pred - y;
+                            let inv_n = 1.0 / ((end - start).max(1) as f32);
                             for col in 0..features {
-                                grad_w[col] += diff * x[[row, col]];
+                                grad_w[col] = grad_w[col] * inv_n + lambda * w[col];
+                                w[col] -= lr * grad_w[col];
                             }
-                            grad_b += diff;
+                            b -= lr * grad_b * inv_n;
+                            start = end;
                         }
-                        let inv_n = 1.0 / (x.shape()[0].max(1) as f32);
-                        for col in 0..features {
-                            grad_w[col] = grad_w[col] * inv_n + lambda * w[col];
-                            w[col] -= lr * grad_w[col];
-                        }
-                        b -= lr * grad_b * inv_n;
                     }
                     (w, b)
                 })
@@ -66,7 +83,11 @@ impl LogisticOVR {
             bias[class_id] = b;
         }
 
-        Self { weights, bias, encoder }
+        Ok(Self {
+            weights,
+            bias,
+            encoder,
+        })
     }
 
     pub(crate) fn predict_scores(&self, probe: &DenseMatrix) -> Vec<(ClassificationLabel, f32)> {

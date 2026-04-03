@@ -240,6 +240,7 @@ fn random_forest_oob_yaml_is_accepted_and_trains_real_oob_score() {
                 min_samples_leaf: rules.random_forest_min_samples_leaf.unwrap_or(1),
                 bootstrap: rules.random_forest_bootstrap.unwrap_or(true),
                 oob_score: rules.random_forest_oob_score.unwrap_or(false),
+                random_seed: rules.random_forest_seed,
             }),
             ..Default::default()
         },

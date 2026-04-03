@@ -49,8 +49,17 @@ impl ClassificationReport {
     }
 
     pub fn write_json<P: AsRef<Path>>(&self, path: P) -> Result<(), VecEyesError> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
+        std::fs::write(path, content).map_err(|err| {
+            VecEyesError::invalid_config(
+                "report::ClassificationReport::write_json",
+                format!("failed to write JSON report to {}: {err}", path.display()),
+            )
+        })?;
         Ok(())
     }
 }

@@ -323,6 +323,7 @@ pub fn advanced_config(mut self, advanced: AdvancedModelConfig) -> Self {
             min_samples_leaf: min_samples_leaf.unwrap_or(1),
             bootstrap: bootstrap.unwrap_or(true),
             oob_score: oob_score.unwrap_or(false),
+            random_seed: None,
         });
         self
     }

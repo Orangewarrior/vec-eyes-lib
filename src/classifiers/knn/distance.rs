@@ -7,39 +7,32 @@ pub enum DistanceMetric {
 }
 
 pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
-    let mut dot = 0.0f32;
-    let mut na = 0.0f32;
-    let mut nb = 0.0f32;
-    for idx in 0..a.len() {
-        dot += a[idx] * b[idx];
-        na += a[idx] * a[idx];
-        nb += b[idx] * b[idx];
-    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let na: f32 = a.iter().map(|x| x * x).sum();
+    let nb: f32 = b.iter().map(|x| x * x).sum();
     let denom = na.sqrt() * nb.sqrt();
     if denom == 0.0 { 1.0 } else { 1.0 - (dot / denom) }
 }
 
 pub(crate) fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
-    let mut acc = 0.0f32;
-    for idx in 0..a.len() {
-        let d = a[idx] - b[idx];
-        acc += d * d;
-    }
-    acc.sqrt()
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| {
+            let d = x - y;
+            d * d
+        })
+        .sum::<f32>()
+        .sqrt()
 }
 
 pub(crate) fn manhattan_distance(a: &[f32], b: &[f32]) -> f32 {
-    let mut acc = 0.0f32;
-    for idx in 0..a.len() {
-        acc += (a[idx] - b[idx]).abs();
-    }
-    acc
+    a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum()
 }
 
 pub(crate) fn minkowski_distance(a: &[f32], b: &[f32], p: f32) -> f32 {
-    let mut acc = 0.0f32;
-    for idx in 0..a.len() {
-        acc += (a[idx] - b[idx]).abs().powf(p);
-    }
-    acc.powf(1.0 / p)
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| (x - y).abs().powf(p))
+        .sum::<f32>()
+        .powf(1.0 / p)
 }

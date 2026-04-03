@@ -95,6 +95,7 @@ pub struct RandomForestConfig {
     pub min_samples_leaf: usize,
     pub bootstrap: bool,
     pub oob_score: bool,
+    pub random_seed: Option<u64>,
 }
 
 impl Default for RandomForestConfig {
@@ -108,6 +109,7 @@ impl Default for RandomForestConfig {
             min_samples_leaf: 1,
             bootstrap: true,
             oob_score: false,
+            random_seed: None,
         }
     }
 }
@@ -281,15 +283,14 @@ impl LabelEncoder {
     }
 
 
-pub(crate) fn encode(&self, label: &ClassificationLabel) -> usize {
-    match self.to_idx.get(label).copied() {
-        Some(idx) => idx,
-        None => {
-            debug_assert!(false, "LabelEncoder received an unseen label during encoding: {}", label.as_str());
-            panic!("LabelEncoder received an unseen label during encoding: {}", label.as_str());
-        }
+    pub(crate) fn encode(&self, label: &ClassificationLabel) -> Result<usize, VecEyesError> {
+        self.to_idx.get(label).copied().ok_or_else(|| {
+            VecEyesError::invalid_config(
+                "advanced_models::LabelEncoder::encode",
+                format!("unseen label: {}", label.as_str()),
+            )
+        })
     }
-}
 
     pub(crate) fn decode(&self, idx: usize) -> ClassificationLabel {
         self.labels.get(idx).cloned().unwrap_or(ClassificationLabel::RawData)
@@ -355,25 +356,25 @@ impl AdvancedClassifier {
             AdvancedMethod::LogisticRegression => {
                 let params = config.logistic.clone().unwrap_or_default();
                 let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
-                let model = LogisticOVR::fit(&matrix, samples, params.epochs, params.learning_rate, params.lambda, config.threads);
+                let model = LogisticOVR::fit(&matrix, samples, params.epochs, params.learning_rate, params.lambda, config.threads)?;
                 Ok(Self { pipeline, inner: AdvancedInner::Logistic(model) })
             }
             AdvancedMethod::Svm => {
                 let params = config.svm.clone().unwrap_or_default();
                 let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
-                let model = LinearSvmOVR::fit(&matrix, samples, &params, config.threads);
+                let model = LinearSvmOVR::fit(&matrix, samples, &params, config.threads)?;
                 Ok(Self { pipeline, inner: AdvancedInner::Svm(model) })
             }
             AdvancedMethod::RandomForest => {
                 let params = config.random_forest.clone().unwrap_or_default();
                 let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
-                let model = RandomForestModel::fit(&matrix, samples, &params, config.threads);
+                let model = RandomForestModel::fit(&matrix, samples, &params, config.threads)?;
                 Ok(Self { pipeline, inner: AdvancedInner::RandomForest(model) })
             }
             AdvancedMethod::GradientBoosting => {
                 let params = config.gradient_boosting.clone().unwrap_or_default();
                 let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
-                let model = GradientBoostingModel::fit(&matrix, samples, params.n_estimators, params.learning_rate, config.threads);
+                let model = GradientBoostingModel::fit(&matrix, samples, params.n_estimators, params.learning_rate, config.threads)?;
                 Ok(Self { pipeline, inner: AdvancedInner::GradientBoosting(model) })
             }
         }

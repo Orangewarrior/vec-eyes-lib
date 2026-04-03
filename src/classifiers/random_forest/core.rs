@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use crate::advanced_models::{LabelEncoder, RandomForestConfig, RandomForestMode};
 use crate::classifier::softmax_scores;
 use crate::dataset::TrainingSample;
+use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::nlp::DenseMatrix;
 use crate::parallel::install_pool;
@@ -103,7 +104,7 @@ fn build_tree(
                     Vec::new()
                 } else {
                     let tries = values.len().min(8).max(2);
-                    (0..tries).map(|_| rng.gen_range(min..max)).collect()
+                    (0..tries).map(|_| rng.random_range(min..max)).collect()
                 }
             }
         };
@@ -155,9 +156,9 @@ pub(crate) struct RandomForestModel {
 }
 
 impl RandomForestModel {
-    pub(crate) fn fit(matrix: &DenseMatrix, samples: &[TrainingSample], config: &RandomForestConfig, threads: Option<usize>) -> Self {
+    pub(crate) fn fit(matrix: &DenseMatrix, samples: &[TrainingSample], config: &RandomForestConfig, threads: Option<usize>) -> Result<Self, VecEyesError> {
         let encoder = LabelEncoder::fit(samples);
-        let y_idx: Vec<usize> = samples.iter().map(|s| encoder.encode(&s.label)).collect();
+        let y_idx: Vec<usize> = samples.iter().map(|s| encoder.encode(&s.label)).collect::<Result<_, _>>()?;
         let rows: Vec<usize> = (0..matrix.shape()[0]).collect();
         let num_classes = encoder.labels.len();
         let feature_budget = config.max_features.resolve(matrix.shape()[1]);
@@ -170,12 +171,13 @@ impl RandomForestModel {
             (0..config.n_trees)
                 .into_par_iter()
                 .map(|tree_id| {
-                    let mut rng = StdRng::seed_from_u64(0xC0FFEE + tree_id as u64 * 17);
+                    let base_seed = config.random_seed.unwrap_or(0xC0FFEE);
+                    let mut rng = StdRng::seed_from_u64(base_seed.wrapping_add(tree_id as u64 * 17));
                     let boot_rows = if config.bootstrap {
                         match config.mode {
                             RandomForestMode::Balanced => Self::balanced_bootstrap(&y_idx, rows.len(), &mut rng),
                             RandomForestMode::Standard | RandomForestMode::ExtraTrees => {
-                                (0..rows.len()).map(|_| rng.gen_range(0..rows.len())).collect::<Vec<_>>()
+                                (0..rows.len()).map(|_| rng.random_range(0..rows.len())).collect::<Vec<_>>()
                             }
                         }
                     } else {
@@ -249,7 +251,7 @@ impl RandomForestModel {
             None
         };
 
-        Self { trees, encoder, oob_score }
+        Ok(Self { trees, encoder, oob_score })
     }
 
     fn balanced_bootstrap(y_idx: &[usize], rows: usize, rng: &mut StdRng) -> Vec<usize> {
@@ -265,7 +267,7 @@ impl RandomForestModel {
                 if group.is_empty() {
                     continue;
                 }
-                let pick = group[rng.gen_range(0..group.len())];
+                let pick = group[rng.random_range(0..group.len())];
                 output.push(pick);
                 if output.len() >= rows {
                     break;

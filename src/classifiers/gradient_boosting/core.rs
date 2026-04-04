@@ -51,8 +51,9 @@ fn fit_regression_stump(x: &DenseMatrix, residual: &[f32]) -> RegStump {
                 if x[[row, feature]] <= threshold { left.push(residual[row]); } else { right.push(residual[row]); }
             }
             if left.is_empty() || right.is_empty() { continue; }
-            let left_mean = left.iter().sum::<f32>() / left.len() as f32;
-            let right_mean = right.iter().sum::<f32>() / right.len() as f32;
+            let lambda = 1.0f32;
+            let left_mean = left.iter().sum::<f32>() / (left.len() as f32 + lambda);
+            let right_mean = right.iter().sum::<f32>() / (right.len() as f32 + lambda);
             let mut loss = 0.0;
             for row in 0..rows {
                 let pred = if x[[row, feature]] <= threshold { left_mean } else { right_mean };

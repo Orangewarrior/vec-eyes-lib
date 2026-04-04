@@ -58,6 +58,50 @@ pub struct ClassificationResult {
     pub extra_hits: Vec<AlertHit>,
 }
 
+impl ClassificationResult {
+    pub fn top_label(&self) -> Option<&ClassificationLabel> { self.labels.first().map(|(l, _)| l) }
+    pub fn top_score(&self) -> f32 { self.labels.first().map(|(_, s)| *s).unwrap_or(0.0) }
+    pub fn is_hot(&self, threshold: f32) -> bool { self.top_score() >= threshold }
+    pub fn rule_hits(&self) -> &[AlertHit] { &self.extra_hits }
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenContribution {
+    pub token: String,
+    pub contribution: f32,
+}
+
+pub trait ExplainableClassifier: Classifier {
+    fn explain(&self, text: &str) -> Vec<TokenContribution>;
+}
+
+pub struct EnsembleClassifier {
+    members: Vec<(Box<dyn Classifier>, f32)>,
+}
+
+impl EnsembleClassifier {
+    pub fn new(members: Vec<(Box<dyn Classifier>, f32)>) -> Self { Self { members } }
+}
+
+impl Classifier for EnsembleClassifier {
+    fn classify_text(&self, text: &str, score_sum_mode: ScoreSumMode, matchers: &[Box<dyn RuleMatcher>]) -> ClassificationResult {
+        use std::collections::HashMap;
+        let mut acc: HashMap<ClassificationLabel, f32> = HashMap::new();
+        let mut hits = Vec::new();
+        for (classifier, weight) in &self.members {
+            let result = classifier.classify_text(text, score_sum_mode, matchers);
+            for (label, score) in result.labels {
+                *acc.entry(label).or_insert(0.0) += score * *weight;
+            }
+            hits.extend(result.extra_hits);
+        }
+        let mut labels: Vec<(ClassificationLabel, f32)> = acc.into_iter().collect();
+        labels.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let labels = softmax_scores(&labels);
+        ClassificationResult { labels, extra_hits: hits }
+    }
+}
+
 pub trait Classifier {
     fn classify_text(
         &self,

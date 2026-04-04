@@ -3,10 +3,10 @@ pub mod tokenizer;
 pub mod feature_extractor;
 
 pub use feature_extractor::{
-    dense_matrix_from_texts, fit_tfidf, transform_tfidf, DenseMatrix, FastTextConfig,
+    dense_matrix_from_texts, dense_matrix_from_texts_with_tfidf, fit_tfidf, fit_tfidf_with_config, transform_tfidf, DenseMatrix, FastTextConfig,
     FastTextConfigBuilder, TfIdfModel, WordEmbeddingModel,
 };
-pub use normalizer::{normalize_text, normalize_text_with_options, set_security_normalization_enabled, SecurityNormalizationOptions};
+pub use normalizer::{decode_obfuscated_text, normalize_text, normalize_text_with_options, set_security_normalization_enabled, SecurityNormalizationOptions};
 pub use tokenizer::tokenize;
 
 use serde::{Deserialize, Serialize};

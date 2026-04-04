@@ -53,6 +53,7 @@ pub struct KnnBuilder {
     k: Option<usize>,
     p: Option<f32>,
     threads: Option<usize>,
+    normalize_features: bool,
 }
 
 impl Builder<KnnClassifier> for KnnBuilder {
@@ -65,6 +66,7 @@ impl Builder<KnnClassifier> for KnnBuilder {
             k: None,
             p: None,
             threads: None,
+            normalize_features: false,
         }
     }
 
@@ -73,7 +75,7 @@ impl Builder<KnnClassifier> for KnnBuilder {
         if let DistanceMetric::Minkowski(_) = self.metric {
             crate::classifier::require_p(self.p)?;
         }
-        KnnClassifier::train(&self.samples, self.nlp, self.metric, self.dims, k, self.threads)
+        KnnClassifier::train(&self.samples, self.nlp, self.metric, self.dims, k, self.threads, self.normalize_features)
     }
 }
 
@@ -88,6 +90,7 @@ pub fn new() -> Self {
         k: None,
         p: None,
         threads: None,
+        normalize_features: false,
     }
 }
 
@@ -117,6 +120,11 @@ pub fn build(self) -> Result<KnnClassifier, VecEyesError> {
 
     pub fn threads(mut self, threads: Option<usize>) -> Self {
         self.threads = threads;
+        self
+    }
+
+    pub fn normalize_features(mut self, normalize_features: bool) -> Self {
+        self.normalize_features = normalize_features;
         self
     }
 
@@ -195,6 +203,9 @@ pub struct KnnClassifier {
     matrix: DenseMatrix,
     model: DenseFeatureModel,
     k: usize,
+    normalize_features: bool,
+    feature_mean: Option<Vec<f32>>,
+    feature_std: Option<Vec<f32>>,
 }
 
 impl KnnClassifier {
@@ -205,8 +216,11 @@ impl KnnClassifier {
         matrix: DenseMatrix,
         model: DenseFeatureModel,
         k: usize,
+        normalize_features: bool,
+        feature_mean: Option<Vec<f32>>,
+        feature_std: Option<Vec<f32>>,
     ) -> Self {
-        Self { metric, threads, labels, matrix, model, k }
+        Self { metric, threads, labels, matrix, model, k, normalize_features, feature_mean, feature_std }
     }
 
     pub(crate) fn metric(&self) -> &DistanceMetric { &self.metric }
@@ -222,22 +236,35 @@ impl KnnClassifier {
         dims: usize,
         k: usize,
         threads: Option<usize>,
+        normalize_features: bool,
     ) -> Result<Self, VecEyesError> {
-        core::train(samples, nlp, metric, dims, k, threads)
+        core::train(samples, nlp, metric, dims, k, threads, normalize_features)
     }
 
     pub(crate) fn matrix_for_text(&self, text: &str) -> DenseMatrix {
         let texts = vec![text.to_string()];
         match &self.model {
-            DenseFeatureModel::Word2Vec(inner) => dense_matrix_from_texts(inner, &texts),
-            DenseFeatureModel::FastText(inner) => dense_matrix_from_texts(inner, &texts),
+            DenseFeatureModel::Word2Vec(inner) => { let mut m = dense_matrix_from_texts(inner, &texts); self.apply_feature_normalization(&mut m); m },
+            DenseFeatureModel::FastText(inner) => { let mut m = dense_matrix_from_texts(inner, &texts); self.apply_feature_normalization(&mut m); m },
         }
     }
 
     fn score_neighbors(&self, text: &str) -> Vec<(ClassificationLabel, f32)> {
         core::score_neighbors(self, text)
     }
+
+    fn apply_feature_normalization(&self, matrix: &mut DenseMatrix) {
+        if !self.normalize_features { return; }
+        if let (Some(mean), Some(std)) = (&self.feature_mean, &self.feature_std) {
+            for row in 0..matrix.shape()[0] {
+                for col in 0..matrix.shape()[1] {
+                    matrix[[row, col]] = (matrix[[row, col]] - mean[col]) / std[col].max(1e-6);
+                }
+            }
+        }
+    }
 }
+
 
 impl Classifier for KnnClassifier {
     fn classify_text(

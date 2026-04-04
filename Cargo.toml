@@ -1,6 +1,6 @@
 [package]
 name = "vec-eyes-lib"
-version = "2.6.5"
+version = "2.7.3"
 edition = "2021"
 license = "MIT"
 authors = ["Orangewarrior"]

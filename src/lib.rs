@@ -49,8 +49,8 @@ pub mod security;
 pub(crate) mod parallel;
 
 pub use classifier::{
-    BayesBuilder, Classifier, ClassifierBuilder, ClassifierFactory, ClassifierMethod,
-    DistanceMetric, KnnBuilder, MethodKind,
+    BayesBuilder, ClassificationResult, Classifier, ClassifierBuilder, ClassifierFactory, ClassifierMethod,
+    DistanceMetric, EnsembleClassifier, ExplainableClassifier, KnnBuilder, MethodKind, TokenContribution,
 };
 pub use advanced_models::{
     AdvancedClassifier, AdvancedModelConfig, GradientBoostingConfig, IsolationForestConfig,

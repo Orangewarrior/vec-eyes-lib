@@ -41,7 +41,8 @@ impl LogisticOVR {
                 .map(|class_id| {
                     let mut w = vec![0.0f32; features];
                     let mut b = 0.0f32;
-                    for _ in 0..epochs {
+                    for epoch in 0..epochs {
+                        let epoch_lr = lr / (1.0 + (epoch as f32) * 0.02);
                         let mut start = 0usize;
                         while start < x.shape()[0] {
                             let end = (start + batch_size).min(x.shape()[0]);
@@ -63,9 +64,9 @@ impl LogisticOVR {
                             let inv_n = 1.0 / ((end - start).max(1) as f32);
                             for col in 0..features {
                                 grad_w[col] = grad_w[col] * inv_n + lambda * w[col];
-                                w[col] -= lr * grad_w[col];
+                                w[col] -= epoch_lr * grad_w[col];
                             }
-                            b -= lr * grad_b * inv_n;
+                            b -= epoch_lr * grad_b * inv_n;
                             start = end;
                         }
                     }

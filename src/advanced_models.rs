@@ -5,7 +5,7 @@ use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::matcher::{RuleMatcher, ScoringEngine};
 use crate::nlp::{
-    dense_matrix_from_texts, fit_tfidf, normalize_text, tokenize, DenseMatrix, FastTextConfigBuilder,
+    dense_matrix_from_texts_with_tfidf, fit_tfidf, normalize_text, tokenize, DenseMatrix, FastTextConfigBuilder,
     NlpOption, TfIdfModel, WordEmbeddingModel,
 };
 use serde::{Deserialize, Serialize};
@@ -209,13 +209,15 @@ impl FeaturePipeline {
             }
             NlpOption::Word2Vec => {
                 let model = WordEmbeddingModel::train_word2vec(&texts, dims);
-                let matrix = dense_matrix_from_texts(&model, &texts);
+                let tfidf = fit_tfidf(&texts);
+                let matrix = dense_matrix_from_texts_with_tfidf(&model, &texts, Some(&tfidf));
                 Ok((Self::Word2Vec(model), matrix))
             }
             NlpOption::FastText => {
                 let cfg = FastTextConfigBuilder::new().build().expect("default FastTextConfigBuilder must be valid");
                 let model = WordEmbeddingModel::train_fasttext(&texts, dims, cfg);
-                let matrix = dense_matrix_from_texts(&model, &texts);
+                let tfidf = fit_tfidf(&texts);
+                let matrix = dense_matrix_from_texts_with_tfidf(&model, &texts, Some(&tfidf));
                 Ok((Self::FastText(model), matrix))
             }
         }
@@ -226,7 +228,7 @@ impl FeaturePipeline {
         match self {
             Self::Count(model) => transform_count(model, &texts),
             Self::TfIdf(model) => crate::nlp::transform_tfidf(model, &texts),
-            Self::Word2Vec(model) | Self::FastText(model) => dense_matrix_from_texts(model, &texts),
+            Self::Word2Vec(model) | Self::FastText(model) => { let tfidf = fit_tfidf(&texts); dense_matrix_from_texts_with_tfidf(model, &texts, Some(&tfidf)) },
         }
     }
 }

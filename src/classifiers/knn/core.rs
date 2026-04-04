@@ -17,6 +17,7 @@ pub(crate) fn train(
     dims: usize,
     k: usize,
     threads: Option<usize>,
+    normalize_features: bool,
 ) -> Result<KnnClassifier, VecEyesError> {
     let texts: Vec<String> = samples.iter().map(|s| s.text.clone()).collect();
     let labels: Vec<ClassificationLabel> = samples.iter().map(|s| s.label.clone()).collect();
@@ -30,12 +31,25 @@ pub(crate) fn train(
         _ => return Err(VecEyesError::invalid_config("classifier::KnnClassifier::train", "KNN requires Word2Vec or FastText")),
     };
 
-    let matrix = match &model {
+    let mut matrix = match &model {
         DenseFeatureModel::Word2Vec(inner) => dense_matrix_from_texts(inner, &texts),
         DenseFeatureModel::FastText(inner) => dense_matrix_from_texts(inner, &texts),
     };
+    let (feature_mean, feature_std) = if normalize_features {
+        let cols = matrix.shape()[1];
+        let rows = matrix.shape()[0].max(1);
+        let mut mean = vec![0.0f32; cols];
+        let mut std = vec![1.0f32; cols];
+        for col in 0..cols {
+            mean[col] = (0..rows).map(|r| matrix[[r, col]]).sum::<f32>() / rows as f32;
+            let variance = (0..rows).map(|r| { let d = matrix[[r, col]] - mean[col]; d * d }).sum::<f32>() / rows as f32;
+            std[col] = variance.sqrt().max(1e-6);
+        }
+        for row in 0..rows { for col in 0..cols { matrix[[row, col]] = (matrix[[row, col]] - mean[col]) / std[col]; } }
+        (Some(mean), Some(std))
+    } else { (None, None) };
 
-    Ok(KnnClassifier::from_parts(metric, threads, labels, matrix, model, k))
+    Ok(KnnClassifier::from_parts(metric, threads, labels, matrix, model, k, normalize_features, feature_mean, feature_std))
 }
 
 pub(crate) fn score_neighbors(model: &KnnClassifier, text: &str) -> Vec<(ClassificationLabel, f32)> {

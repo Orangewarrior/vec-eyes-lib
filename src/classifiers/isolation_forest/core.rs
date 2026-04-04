@@ -134,12 +134,14 @@ impl IsolationForestModel {
         }
         let avg_path = path_sum / self.trees.len().max(1) as f32;
         let score = 2f32.powf(-avg_path / avg_c);
-        let z = (score - self.score_mean) / self.score_std;
-        let threshold_z = (self.threshold - self.score_mean) / self.score_std;
-        let anomaly_prob = 1.0 / (1.0 + (-(z - threshold_z)).exp());
+        let z = (score - self.score_mean) / self.score_std.max(1e-6);
+        let threshold_delta = score - self.threshold;
+        let threshold_signal = (threshold_delta * 6.0).clamp(-2.5, 2.5);
+        let anomaly_logit = (z * 0.85) + threshold_signal;
+        let anomaly_prob = (1.0 / (1.0 + (-anomaly_logit).exp())).clamp(1e-6, 1.0 - 1e-6);
         let normal_prob = (1.0 - anomaly_prob).max(1e-6);
         let raw = vec![
-            (self.anomaly_label.clone(), anomaly_prob.max(1e-6).ln()),
+            (self.anomaly_label.clone(), anomaly_prob.ln()),
             (self.normal_label.clone(), normal_prob.ln()),
         ];
         softmax_scores(&raw)

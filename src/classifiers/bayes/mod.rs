@@ -3,7 +3,7 @@ pub(crate) mod core;
 use std::collections::HashMap;
 
 use crate::builders::Builder;
-use crate::classifier::{ClassificationResult, Classifier, ClassifierBuilder, ClassifierFactory, ClassifierMethod};
+use crate::classifier::{ClassificationResult, Classifier, ClassifierBuilder, ClassifierFactory, ClassifierMethod, ExplainableClassifier, TokenContribution};
 use crate::config::ScoreSumMode;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
@@ -139,5 +139,26 @@ impl Classifier for BayesClassifier {
 impl From<BayesClassifier> for Box<dyn Classifier> {
     fn from(value: BayesClassifier) -> Self {
         Box::new(value)
+    }
+}
+
+
+impl ExplainableClassifier for BayesClassifier {
+    fn explain(&self, text: &str) -> Vec<TokenContribution> {
+        let normalized = crate::nlp::normalize_text(text);
+        let tokens = crate::nlp::tokenize(&normalized);
+        let top = self.base_scores(text).into_iter().max_by(|a,b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)).map(|(label, _)| label);
+        let Some(label) = top else { return Vec::new(); };
+        let token_map = self.token_scores().get(&label);
+        let total_tokens = self.token_totals().get(&label).copied().unwrap_or(0.0);
+        let denominator = total_tokens + self.alpha() * self.vocab_size() as f32;
+        let mut out = Vec::new();
+        for token in tokens {
+            let count = token_map.and_then(|m| m.get(&token)).copied().unwrap_or(0.0);
+            let contribution = ((count + self.alpha()) / denominator.max(1e-6)).ln();
+            out.push(TokenContribution { token, contribution });
+        }
+        out.sort_by(|a,b| b.contribution.partial_cmp(&a.contribution).unwrap_or(std::cmp::Ordering::Equal));
+        out
     }
 }

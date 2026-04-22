@@ -11,13 +11,18 @@ path = "src/lib.rs"
 
 [features]
 default = []
-blas = ["ndarray/blas"]
+# Enable BLAS-accelerated matrix ops (dgemm/gemv/sdot).
+# Also add a concrete backend in your binary crate, e.g.:
+#   blas-src = { version = "0.10", features = ["openblas"] }
+blas = ["ndarray/blas", "dep:blas-src"]
 vectorscan = ["dep:vectorscan-rs"]
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 csv = "1.4"
 ndarray = { version = "0.17", features = [] }
+# BLAS provider – backend chosen by the downstream binary crate via feature flags
+blas-src = { version = "0.10", default-features = false, optional = true }
 rayon = "1.11"
 regex = "1"
 serde = { version = "1", features = ["derive"] }

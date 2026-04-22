@@ -425,7 +425,14 @@ impl Classifier for AdvancedClassifier {
         matchers: &[Box<dyn RuleMatcher>],
     ) -> ClassificationResult {
         let mut labels = self.base_scores(text);
-        let (boost, hits) = ScoringEngine::compute_rule_boost(text, matchers);
+        // Only compute rule boost if it will be used; hits are still collected for telemetry
+        let (boost, hits) = if score_sum_mode.is_on() {
+            ScoringEngine::compute_rule_boost(text, matchers)
+        } else {
+            // Skip expensive boost computation when not needed, but still collect hits
+            let hits = ScoringEngine::find_matches_only(text, matchers);
+            (0.0, hits)
+        };
         if score_sum_mode.is_on() {
             for (_, score) in &mut labels {
                 *score = ScoringEngine::merge_scores(*score, boost, score_sum_mode);

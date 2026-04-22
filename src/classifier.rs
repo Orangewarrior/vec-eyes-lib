@@ -240,27 +240,6 @@ impl Builder<Box<dyn Classifier>> for ClassifierBuilder {
 }
 
 impl ClassifierBuilder {
-
-pub fn new() -> Self {
-    Self {
-        method: None,
-        nlp: None,
-        hot_label: None,
-        cold_label: None,
-        hot_path: None,
-        cold_path: None,
-        recursive: true,
-        threads: None,
-        k: None,
-        p: None,
-        advanced: AdvancedModelConfig::default(),
-    }
-}
-
-pub fn build(self) -> Result<Box<dyn Classifier>, VecEyesError> {
-    <Self as Builder<Box<dyn Classifier>>>::build(self)
-}
-
     pub fn method(mut self, method: ClassifierMethod) -> Self {
         self.method = Some(method);
         self
@@ -301,15 +280,15 @@ pub fn build(self) -> Result<Box<dyn Classifier>, VecEyesError> {
         self
     }
 
-pub fn embedding_dimensions(mut self, dimensions: usize) -> Self {
-    self.advanced.embedding_dimensions = Some(dimensions.max(1));
-    self
-}
+    pub fn embedding_dimensions(mut self, dimensions: usize) -> Self {
+        self.advanced.embedding_dimensions = Some(dimensions.max(1));
+        self
+    }
 
-pub fn advanced_config(mut self, advanced: AdvancedModelConfig) -> Self {
-    self.advanced = advanced;
-    self
-}
+    pub fn advanced_config(mut self, advanced: AdvancedModelConfig) -> Self {
+        self.advanced = advanced;
+        self
+    }
 
     pub fn k(mut self, k: usize) -> Self {
         self.k = Some(k);
@@ -500,23 +479,20 @@ pub(crate) fn softmax_scores(input: &[(ClassificationLabel, f32)]) -> Vec<(Class
         return Vec::new();
     }
 
-    let mut max_score = f32::NEG_INFINITY;
-    for (_, score) in input {
-        if *score > max_score {
-            max_score = *score;
-        }
-    }
+    let max_score = input.iter().map(|(_, score)| *score).fold(f32::NEG_INFINITY, f32::max);
 
     let mut sum = 0.0f32;
-    let mut exp_values = Vec::new();
+    let mut exp_values = Vec::with_capacity(input.len());
     for (label, score) in input {
         let value = (*score - max_score).exp();
         sum += value;
         exp_values.push((label.clone(), value));
     }
 
-    exp_values
-        .into_iter()
-        .map(|(label, value)| (label, if sum > 0.0 { value / sum } else { 0.0 }))
-        .collect()
+    if sum <= 0.0 {
+        return exp_values.into_iter().map(|(label, _)| (label, 0.0)).collect();
+    }
+
+    let inv_sum = 1.0 / sum;
+    exp_values.into_iter().map(|(label, value)| (label, value * inv_sum)).collect()
 }

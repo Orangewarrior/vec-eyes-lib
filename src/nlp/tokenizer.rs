@@ -15,7 +15,8 @@ pub fn tokenize(input: &str) -> Vec<String> {
             flush_token(&mut current, &mut tokens);
         }
 
-        current.push(c.to_ascii_lowercase());
+        // normalize_text already applies to_lowercase, so just push the char
+        current.push(c);
         prev_is_upper = is_upper;
     }
 
@@ -24,9 +25,11 @@ pub fn tokenize(input: &str) -> Vec<String> {
 }
 
 fn flush_token(current: &mut String, tokens: &mut Vec<String>) {
-    if current.len() >= 2 {
-        tokens.push(std::mem::take(current));
-    } else {
+    if !current.is_empty() {
+        // Preserve all tokens including single-char ones for security analysis
+        // Symbols like <, >, | and single digits can be critical in malware/syscall detection
+        let token = current.clone();
         current.clear();
+        tokens.push(token);
     }
 }

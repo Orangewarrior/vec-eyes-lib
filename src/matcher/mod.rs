@@ -239,11 +239,14 @@ impl ScoringEngine {
         (total.min(100.0), hits)
     }
 
-    pub fn merge_scores(base_percent: f32, extra_percent: f32, mode: ScoreSumMode) -> f32 {
+    /// Merges a base probability in `[0,1]` with an additive rule boost.
+    /// Rule scores are kept in a user-friendly `[0, 100]` scale in rule files;
+    /// they are divided by 100 here so the result stays in `[0, 1]`.
+    pub fn merge_scores(base: f32, rule_boost: f32, mode: ScoreSumMode) -> f32 {
         if mode.is_on() {
-            (base_percent + extra_percent).min(100.0)
+            (base + rule_boost / 100.0).min(1.0)
         } else {
-            base_percent
+            base
         }
     }
 

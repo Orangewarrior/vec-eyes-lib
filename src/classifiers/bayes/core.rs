@@ -6,7 +6,7 @@ use crate::classifiers::bayes::BayesClassifier;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
-use crate::nlp::{fit_tfidf, transform_tfidf, NlpOption};
+use crate::nlp::{fit_tfidf, NlpOption};
 use crate::parallel::install_pool;
 
 pub(crate) fn train(samples: &[TrainingSample], nlp: NlpOption, threads: Option<usize>) -> Result<BayesClassifier, VecEyesError> {
@@ -15,6 +15,8 @@ pub(crate) fn train(samples: &[TrainingSample], nlp: NlpOption, threads: Option<
     let mut label_counts: HashMap<ClassificationLabel, usize> = HashMap::new();
     let mut vocab = HashSet::new();
     let texts: Vec<String> = samples.iter().map(|s| s.text.clone()).collect();
+    // Fit TF-IDF on the training corpus; the stored IDF is later used as a
+    // stationary token weight during inference (not refitted on the probe).
     let tfidf = if nlp == NlpOption::TfIdf { Some(fit_tfidf(&texts)) } else { None };
 
     for sample in samples {
@@ -55,14 +57,9 @@ pub(crate) fn base_scores(model: &BayesClassifier, text: &str) -> Vec<(Classific
     let normalized = crate::nlp::normalize_text(text);
     let tokens = crate::nlp::tokenize(&normalized);
     let labels = model.labels().clone();
-    let tfidf_matrix = if model.nlp_option() == NlpOption::TfIdf {
-        model.tfidf_model().as_ref().map(|m| transform_tfidf(m, &[text.to_string()]))
-    } else {
-        None
-    };
     // Out-of-vocabulary tokens are intentionally treated as unseen terms.
-    // The model persists only vocab_size for Laplace smoothing, so OOV inputs
-    // contribute through the smoothed denominator instead of requiring a stored vocabulary map.
+    // vocab_size is stored for Laplace smoothing; OOV contributes through
+    // the smoothed denominator without requiring a full stored vocabulary.
     let vocab_size = model.vocab_size() as f32;
     let alpha = model.alpha();
 
@@ -76,23 +73,30 @@ pub(crate) fn base_scores(model: &BayesClassifier, text: &str) -> Vec<(Classific
             let mut score = prior;
 
             if model.nlp_option() == NlpOption::TfIdf {
-                if let (Some(tfidf), Some(matrix)) = (model.tfidf_model(), &tfidf_matrix) {
+                // IDF-weighted Multinomial NB: weight each token's log-likelihood
+                // by its corpus IDF (from the training fit, not the probe document).
+                // This is stationary across documents and statistically consistent.
+                if let Some(tfidf) = model.tfidf_model() {
                     for token in &tokens {
                         let count = token_map.and_then(|m| m.get(token)).copied().unwrap_or(0.0);
-                        let probability = ((count + alpha) / denominator.max(alpha * vocab_size)).max(1e-9);
-                        let weight = tfidf
+                        let log_prob = ((count + alpha) / denominator.max(alpha * vocab_size))
+                            .max(1e-9)
+                            .ln();
+                        let idf_weight = tfidf
                             .token_to_index
                             .get(token)
-                            .map(|index| matrix[[0, *index]].max(1e-6))
-                            .unwrap_or(1e-6);
-                        score += weight * probability.ln();
+                            .map(|&idx| tfidf.idf[idx])
+                            .unwrap_or(1.0);
+                        score += idf_weight * log_prob;
                     }
                 }
             } else {
+                // Standard Multinomial NB with Laplace smoothing
                 for token in &tokens {
                     let count = token_map.and_then(|m| m.get(token)).copied().unwrap_or(0.0);
-                    let probability = ((count + alpha) / denominator.max(alpha * vocab_size)).max(1e-9);
-                    score += probability.ln();
+                    score += ((count + alpha) / denominator.max(alpha * vocab_size))
+                        .max(1e-9)
+                        .ln();
                 }
             }
             (label.clone(), score)

@@ -5,8 +5,8 @@ use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::matcher::{RuleMatcher, ScoringEngine};
 use crate::nlp::{
-    dense_matrix_from_texts_with_tfidf, fit_tfidf, normalize_text, tokenize, DenseMatrix, FastTextConfigBuilder,
-    NlpOption, TfIdfModel, WordEmbeddingModel,
+    dense_matrix_from_texts_with_tfidf, fit_tfidf, normalize_text, tokenize, DenseMatrix,
+    FastTextConfigBuilder, NlpOption, TfIdfModel, WordEmbeddingModel,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -185,12 +185,18 @@ pub enum AdvancedMethod {
     GradientBoosting,
 }
 
+/// Feature extraction pipeline stored alongside trained models.
+///
+/// Word2Vec and FastText variants carry the IDF model fitted on the **training**
+/// corpus so inference never has to refit TF-IDF on a single probe document
+/// (which would make every IDF weight degenerate and lose all discriminative
+/// power from the training distribution).
 #[derive(Debug, Clone)]
 enum FeaturePipeline {
     Count(TfIdfModel),
     TfIdf(TfIdfModel),
-    Word2Vec(WordEmbeddingModel),
-    FastText(WordEmbeddingModel),
+    Word2Vec { model: WordEmbeddingModel, idf: TfIdfModel },
+    FastText { model: WordEmbeddingModel, idf: TfIdfModel },
 }
 
 impl FeaturePipeline {
@@ -208,17 +214,17 @@ impl FeaturePipeline {
                 Ok((Self::TfIdf(model), matrix))
             }
             NlpOption::Word2Vec => {
+                let idf = fit_tfidf(&texts);
                 let model = WordEmbeddingModel::train_word2vec(&texts, dims);
-                let tfidf = fit_tfidf(&texts);
-                let matrix = dense_matrix_from_texts_with_tfidf(&model, &texts, Some(&tfidf));
-                Ok((Self::Word2Vec(model), matrix))
+                let matrix = dense_matrix_from_texts_with_tfidf(&model, &texts, Some(&idf));
+                Ok((Self::Word2Vec { model, idf }, matrix))
             }
             NlpOption::FastText => {
                 let cfg = FastTextConfigBuilder::new().build().expect("default FastTextConfigBuilder must be valid");
+                let idf = fit_tfidf(&texts);
                 let model = WordEmbeddingModel::train_fasttext(&texts, dims, cfg);
-                let tfidf = fit_tfidf(&texts);
-                let matrix = dense_matrix_from_texts_with_tfidf(&model, &texts, Some(&tfidf));
-                Ok((Self::FastText(model), matrix))
+                let matrix = dense_matrix_from_texts_with_tfidf(&model, &texts, Some(&idf));
+                Ok((Self::FastText { model, idf }, matrix))
             }
         }
     }
@@ -226,9 +232,11 @@ impl FeaturePipeline {
     fn transform_text(&self, text: &str) -> DenseMatrix {
         let texts = vec![text.to_string()];
         match self {
-            Self::Count(model) => transform_count(model, &texts),
-            Self::TfIdf(model) => crate::nlp::transform_tfidf(model, &texts),
-            Self::Word2Vec(model) | Self::FastText(model) => { let tfidf = fit_tfidf(&texts); dense_matrix_from_texts_with_tfidf(model, &texts, Some(&tfidf)) },
+            Self::Count(model)  => transform_count(model, &texts),
+            Self::TfIdf(model)  => crate::nlp::transform_tfidf(model, &texts),
+            // Use the stored training IDF — never refit on the probe document.
+            Self::Word2Vec { model, idf } => dense_matrix_from_texts_with_tfidf(model, &texts, Some(idf)),
+            Self::FastText { model, idf } => dense_matrix_from_texts_with_tfidf(model, &texts, Some(idf)),
         }
     }
 }
@@ -341,15 +349,23 @@ impl AdvancedClassifier {
                     ));
                 }
                 let params = config.isolation_forest.clone().unwrap_or_default();
-                let cold_only: Vec<TrainingSample> = samples.iter().filter(|s| s.label == cold_label).cloned().collect();
-                let basis = if cold_only.is_empty() { samples.to_vec() } else { cold_only };
-                let (pipeline, matrix) = FeaturePipeline::fit(&basis, nlp, dims)?;
+                // Train on the full dataset so the isolation tree sees the real data
+                // distribution.  Derive contamination from the observed hot fraction
+                // when ground-truth labels are available; fall back to the user value
+                // when all samples share the same label.
+                let hot_count = samples.iter().filter(|s| s.label == hot_label).count();
+                let contamination = if hot_count > 0 && hot_count < samples.len() {
+                    (hot_count as f32 / samples.len() as f32).clamp(0.001, 0.49)
+                } else {
+                    params.contamination
+                };
+                let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
                 let model = IsolationForestModel::fit(
                     &matrix,
                     hot_label,
                     cold_label,
                     params.n_trees,
-                    params.contamination,
+                    contamination,
                     params.subsample_size,
                     config.threads,
                 );

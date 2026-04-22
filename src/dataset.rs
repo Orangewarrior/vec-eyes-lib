@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 const MAX_DISCOVERED_FILES: usize = 10_000;
-const MAX_TEXT_FILE_BYTES: u64 = 8 * 1024 * 1024;
+pub const DEFAULT_MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct TrainingSample {
@@ -16,20 +16,24 @@ pub struct TrainingSample {
     pub source_name: String,
 }
 
-pub fn read_text_file(path: &Path) -> Result<String, VecEyesError> {
+pub fn read_text_file_limited(path: &Path, max_bytes: u64) -> Result<String, VecEyesError> {
     let canonical = sanitize_existing_path(path)?;
     let metadata = fs::metadata(&canonical)?;
-    if metadata.len() > MAX_TEXT_FILE_BYTES {
+    if metadata.len() > max_bytes {
         return Err(VecEyesError::invalid_config(
-            "dataset::read_text_file",
+            "dataset::read_text_file_limited",
             format!(
                 "file {} exceeds the maximum allowed size of {} bytes",
                 canonical.display(),
-                MAX_TEXT_FILE_BYTES
+                max_bytes
             ),
         ));
     }
     Ok(fs::read_to_string(canonical)?)
+}
+
+pub fn read_text_file(path: &Path) -> Result<String, VecEyesError> {
+    read_text_file_limited(path, DEFAULT_MAX_FILE_BYTES)
 }
 
 pub fn collect_files_recursively(
@@ -45,13 +49,13 @@ pub fn collect_files_recursively(
                 let metadata = entry.metadata().map_err(|e| {
                     VecEyesError::invalid_config("dataset::collect_files_recursively", format!("metadata read failed for {}: {}", entry.path().display(), e))
                 })?;
-                if metadata.len() > MAX_TEXT_FILE_BYTES {
+                if metadata.len() > DEFAULT_MAX_FILE_BYTES {
                     return Err(VecEyesError::invalid_config(
                         "dataset::collect_files_recursively",
                         format!(
                             "file {} exceeds the maximum allowed size of {} bytes",
                             entry.path().display(),
-                            MAX_TEXT_FILE_BYTES
+                            DEFAULT_MAX_FILE_BYTES
                         ),
                     ));
                 }
@@ -70,13 +74,13 @@ pub fn collect_files_recursively(
             let entry = entry?;
             if entry.file_type()?.is_file() {
                 let metadata = entry.metadata()?;
-                if metadata.len() > MAX_TEXT_FILE_BYTES {
+                if metadata.len() > DEFAULT_MAX_FILE_BYTES {
                     return Err(VecEyesError::invalid_config(
                         "dataset::collect_files_recursively",
                         format!(
                             "file {} exceeds the maximum allowed size of {} bytes",
                             entry.path().display(),
-                            MAX_TEXT_FILE_BYTES
+                            DEFAULT_MAX_FILE_BYTES
                         ),
                     ));
                 }

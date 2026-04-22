@@ -17,7 +17,7 @@ pub(crate) fn train(
     threads: Option<usize>,
     normalize_features: bool,
 ) -> Result<KnnClassifier, VecEyesError> {
-    let texts: Vec<String> = samples.iter().map(|s| s.text.clone()).collect();
+    let texts: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
     let labels: Vec<ClassificationLabel> = samples.iter().map(|s| s.label.clone()).collect();
 
     let model = match nlp {

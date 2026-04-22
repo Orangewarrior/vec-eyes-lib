@@ -5,7 +5,7 @@ use crate::advanced_models::{
 };
 use crate::builders::Builder;
 use crate::config::{RulesFile, ScoreSumMode};
-use crate::dataset::{load_training_samples, read_text_file};
+use crate::dataset::{load_training_samples, read_text_file_limited};
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::matcher::{AlertHit, RuleMatcher, ScoringEngine};
@@ -475,9 +475,10 @@ pub fn run_rules_pipeline(
     let matchers = ScoringEngine::matchers_from_rules_file(rules)?;
     let mut report = crate::report::ClassificationReport::new(rules.report_name.clone().unwrap_or_else(|| "Vec-Eyes Report".to_string()));
 
+    let max_file_bytes = rules.max_file_bytes.unwrap_or(crate::dataset::DEFAULT_MAX_FILE_BYTES);
     let files = crate::dataset::collect_files_recursively(classify_objects, rules.recursive_way.is_on())?;
     for file in files {
-        let text = read_text_file(&file)?;
+        let text = read_text_file_limited(&file, max_file_bytes)?;
         let result = classifier.classify_text(&text, rules.score_sum, &matchers);
         let labels: Vec<String> = result.labels.iter().map(|(l, s)| format!("{}:{:.2}", l, s)).collect();
         let top_score = result.labels.first().map(|x| x.1).unwrap_or(0.0);

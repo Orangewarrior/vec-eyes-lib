@@ -201,7 +201,7 @@ enum FeaturePipeline {
 
 impl FeaturePipeline {
     fn fit(samples: &[TrainingSample], nlp: NlpOption, dims: usize) -> Result<(Self, DenseMatrix), VecEyesError> {
-        let texts: Vec<String> = samples.iter().map(|s| s.text.clone()).collect();
+        let texts: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
         match nlp {
             NlpOption::Count => {
                 let model = fit_tfidf(&texts);
@@ -230,7 +230,7 @@ impl FeaturePipeline {
     }
 
     fn transform_text(&self, text: &str) -> DenseMatrix {
-        let texts = vec![text.to_string()];
+        let texts = [text];
         match self {
             Self::Count(model)  => transform_count(model, &texts),
             Self::TfIdf(model)  => crate::nlp::transform_tfidf(model, &texts),
@@ -241,13 +241,13 @@ impl FeaturePipeline {
     }
 }
 
-fn transform_count(model: &TfIdfModel, texts: &[String]) -> DenseMatrix {
+fn transform_count<S: AsRef<str>>(model: &TfIdfModel, texts: &[S]) -> DenseMatrix {
     let rows = texts.len();
     let cols = model.vocab.len();
     let mut matrix = ndarray::Array2::<f32>::zeros((rows, cols));
 
     for row in 0..texts.len() {
-        let normalized = normalize_text(&texts[row]);
+        let normalized = normalize_text(texts[row].as_ref());
         let tokens = tokenize(&normalized);
         for token in tokens {
             if let Some(index) = model.token_to_index.get(&token) {
@@ -284,6 +284,7 @@ impl LabelEncoder {
     pub(crate) fn fit(samples: &[TrainingSample]) -> Self {
         let mut labels: Vec<ClassificationLabel> = samples.iter().map(|s| s.label.clone()).collect();
         labels.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        // sort must precede dedup — dedup only removes consecutive duplicates
         labels.dedup();
         let mut to_idx = HashMap::new();
         for (idx, label) in labels.iter().enumerate() {
@@ -425,12 +426,15 @@ impl Classifier for AdvancedClassifier {
         matchers: &[Box<dyn RuleMatcher>],
     ) -> ClassificationResult {
         let mut labels = self.base_scores(text);
-        let (boost, hits) = ScoringEngine::compute_rule_boost(text, matchers);
-        if score_sum_mode.is_on() {
+        let hits = if score_sum_mode.is_on() {
+            let (boost, hits) = ScoringEngine::compute_rule_boost(text, matchers);
             for (_, score) in &mut labels {
                 *score = ScoringEngine::merge_scores(*score, boost, score_sum_mode);
             }
-        }
+            hits
+        } else {
+            matchers.iter().flat_map(|m| m.find_matches(text)).collect()
+        };
         labels.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         ClassificationResult { labels, extra_hits: hits }
     }

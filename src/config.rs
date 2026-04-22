@@ -155,6 +155,8 @@ pub struct RulesFile {
     pub isolation_forest_contamination: Option<f32>,
     #[serde(default)]
     pub isolation_forest_subsample_size: Option<usize>,
+    #[serde(default)]
+    pub max_file_bytes: Option<u64>,
 }
 
 fn validate_maybe_relative_path(path: &Path, allowed_base: &Path) -> Result<(), VecEyesError> {

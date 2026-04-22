@@ -4,11 +4,18 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 static GLOBAL_POOLS: OnceLock<Mutex<HashMap<usize, Arc<ThreadPool>>>> = OnceLock::new();
 
+const MAX_POOL_CACHE: usize = 32;
+
 fn cached_pool(threads: usize) -> Option<Arc<ThreadPool>> {
     let cache = GLOBAL_POOLS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = cache.lock().ok()?;
     if let Some(pool) = guard.get(&threads) {
         return Some(Arc::clone(pool));
+    }
+    if guard.len() >= MAX_POOL_CACHE {
+        if let Some(&evict_key) = guard.keys().next() {
+            guard.remove(&evict_key);
+        }
     }
     let pool = Arc::new(ThreadPoolBuilder::new().num_threads(threads).build().ok()?);
     guard.insert(threads, Arc::clone(&pool));

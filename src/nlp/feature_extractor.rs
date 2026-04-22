@@ -53,15 +53,15 @@ const DEFAULT_STOPWORDS: &[&str] = &[
     "from", "that", "this", "it", "be", "as", "are", "was", "were",
 ];
 
-pub fn fit_tfidf(texts: &[String]) -> TfIdfModel {
+pub fn fit_tfidf<S: AsRef<str>>(texts: &[S]) -> TfIdfModel {
     fit_tfidf_with_config(texts, DEFAULT_MIN_DF, DEFAULT_MAX_DF_RATIO)
 }
 
-pub fn fit_tfidf_with_config(texts: &[String], min_df: usize, max_df_ratio: f32) -> TfIdfModel {
+pub fn fit_tfidf_with_config<S: AsRef<str>>(texts: &[S], min_df: usize, max_df_ratio: f32) -> TfIdfModel {
     let mut df: HashMap<String, usize> = HashMap::new();
     let stopwords: HashSet<&str> = DEFAULT_STOPWORDS.iter().copied().collect();
     for text in texts {
-        let normalized = normalize_text(text);
+        let normalized = normalize_text(text.as_ref());
         let tokens = tokenize(&normalized);
         let mut seen = HashSet::new();
         for token in &tokens {
@@ -92,12 +92,12 @@ pub fn fit_tfidf_with_config(texts: &[String], min_df: usize, max_df_ratio: f32)
 ///
 /// Uses `tf = 1 + ln(count)` (Salton & Buckley 1988) so high-frequency terms
 /// don't dominate and the scale is consistent across document lengths.
-pub fn transform_tfidf(model: &TfIdfModel, texts: &[String]) -> DenseMatrix {
+pub fn transform_tfidf<S: AsRef<str>>(model: &TfIdfModel, texts: &[S]) -> DenseMatrix {
     let rows = texts.len();
     let cols = model.vocab.len();
     let mut matrix = Array2::<f32>::zeros((rows, cols));
     for row in 0..rows {
-        let normalized = normalize_text(&texts[row]);
+        let normalized = normalize_text(texts[row].as_ref());
         let tokens = tokenize(&normalized);
         let mut counts: HashMap<usize, usize> = HashMap::new();
         for token in tokens {
@@ -123,11 +123,11 @@ pub struct WordEmbeddingModel {
 }
 
 impl WordEmbeddingModel {
-    pub fn train_word2vec(texts: &[String], dims: usize) -> Self {
+    pub fn train_word2vec<S: AsRef<str>>(texts: &[S], dims: usize) -> Self {
         let vectors = train_context_embeddings(texts, dims, None);
         Self { dims, vectors, fasttext: None }
     }
-    pub fn train_fasttext(texts: &[String], dims: usize, config: FastTextConfig) -> Self {
+    pub fn train_fasttext<S: AsRef<str>>(texts: &[S], dims: usize, config: FastTextConfig) -> Self {
         let vectors = train_context_embeddings(texts, dims, Some(&config));
         Self { dims, vectors, fasttext: Some(config) }
     }
@@ -138,7 +138,7 @@ impl WordEmbeddingModel {
     }
 }
 
-pub fn dense_matrix_from_texts(model: &WordEmbeddingModel, texts: &[String]) -> DenseMatrix {
+pub fn dense_matrix_from_texts<S: AsRef<str>>(model: &WordEmbeddingModel, texts: &[S]) -> DenseMatrix {
     dense_matrix_from_texts_with_tfidf(model, texts, None)
 }
 
@@ -146,9 +146,9 @@ pub fn dense_matrix_from_texts(model: &WordEmbeddingModel, texts: &[String]) -> 
 ///
 /// When `tfidf_model` is supplied it must be the model fitted on the **training**
 /// corpus (never re-fitted on the probe document) so IDF weights are stationary.
-pub fn dense_matrix_from_texts_with_tfidf(
+pub fn dense_matrix_from_texts_with_tfidf<S: AsRef<str>>(
     model: &WordEmbeddingModel,
-    texts: &[String],
+    texts: &[S],
     tfidf_model: Option<&TfIdfModel>,
 ) -> DenseMatrix {
     let dims = model.dims;
@@ -156,7 +156,7 @@ pub fn dense_matrix_from_texts_with_tfidf(
     let mut acc = Array1::<f32>::zeros(dims);
 
     for (row_idx, text) in texts.iter().enumerate() {
-        let normalized = normalize_text(text);
+        let normalized = normalize_text(text.as_ref());
         let tokens = tokenize(&normalized);
         if tokens.is_empty() { continue; }
 
@@ -202,8 +202,8 @@ fn l2_normalize_row(matrix: &mut DenseMatrix, row: usize) {
 ///
 /// Two embedding matrices (Mikolov 2013): W_in encodes center words, W_out
 /// encodes context words.  Only W_in is returned as the final representation.
-fn train_context_embeddings(
-    texts: &[String],
+fn train_context_embeddings<S: AsRef<str>>(
+    texts: &[S],
     dims: usize,
     fasttext: Option<&FastTextConfig>,
 ) -> HashMap<String, Vec<f32>> {
@@ -217,7 +217,7 @@ fn train_context_embeddings(
     let mut vocab_counts: HashMap<String, usize> = HashMap::new();
     let mut flat_tokens: Vec<Vec<String>> = Vec::new();
     for text in texts {
-        let tokens = tokenize(&normalize_text(text));
+        let tokens = tokenize(&normalize_text(text.as_ref()));
         if !tokens.is_empty() {
             for t in &tokens { *vocab_counts.entry(t.clone()).or_insert(0) += 1; }
             flat_tokens.push(tokens);

@@ -42,7 +42,7 @@ impl KnnModule {
 }
 
 pub use distance::DistanceMetric;
-pub(crate) use distance::{cosine_distance, euclidean_distance, manhattan_distance, minkowski_distance};
+pub(crate) use distance::{manhattan_distance, minkowski_distance};
 
 #[derive(Debug, Clone)]
 pub struct KnnBuilder {

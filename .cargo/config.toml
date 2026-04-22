@@ -1,0 +1,4 @@
+[build]
+# Emit code for the host CPU's full ISA (AVX2, AVX-512, etc.).
+# This applies to all profiles and crate types in this workspace.
+rustflags = ["-C", "target-cpu=native"]

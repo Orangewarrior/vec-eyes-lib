@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
-use ndarray::Axis;
-
 use crate::classifier::softmax_scores;
-use crate::classifiers::knn::{cosine_distance, euclidean_distance, manhattan_distance, minkowski_distance, DenseFeatureModel, DistanceMetric, KnnClassifier};
+use crate::classifiers::knn::{manhattan_distance, minkowski_distance, DenseFeatureModel, DistanceMetric, KnnClassifier};
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
@@ -35,55 +33,82 @@ pub(crate) fn train(
         DenseFeatureModel::Word2Vec(inner) => dense_matrix_from_texts(inner, &texts),
         DenseFeatureModel::FastText(inner) => dense_matrix_from_texts(inner, &texts),
     };
+
     let (feature_mean, feature_std) = if normalize_features {
         let cols = matrix.shape()[1];
         let rows = matrix.shape()[0].max(1);
         let mut mean = vec![0.0f32; cols];
-        let mut std = vec![1.0f32; cols];
+        let mut std  = vec![1.0f32; cols];
+        // Column-wise mean/std via ndarray column views (sequential access).
         for col in 0..cols {
-            mean[col] = (0..rows).map(|r| matrix[[r, col]]).sum::<f32>() / rows as f32;
-            let variance = (0..rows).map(|r| { let d = matrix[[r, col]] - mean[col]; d * d }).sum::<f32>() / rows as f32;
-            std[col] = variance.sqrt().max(1e-6);
+            let col_view = matrix.column(col);
+            mean[col] = col_view.iter().copied().sum::<f32>() / rows as f32;
+            let m = mean[col];
+            let var = col_view.iter().map(|&v| (v - m) * (v - m)).sum::<f32>() / rows as f32;
+            std[col] = var.sqrt().max(1e-6);
         }
-        for row in 0..rows { for col in 0..cols { matrix[[row, col]] = (matrix[[row, col]] - mean[col]) / std[col]; } }
+        // Normalise every row with ndarray Zip (SIMD element-wise).
+        let mean_view = ndarray::ArrayView1::from(mean.as_slice());
+        let std_view  = ndarray::ArrayView1::from(std.as_slice());
+        for mut row in matrix.rows_mut() {
+            ndarray::Zip::from(&mut row)
+                .and(mean_view)
+                .and(std_view)
+                .for_each(|v, &m, &s| *v = (*v - m) / s);
+        }
         (Some(mean), Some(std))
-    } else { (None, None) };
+    } else {
+        (None, None)
+    };
 
     Ok(KnnClassifier::from_parts(metric, threads, labels, matrix, model, k, normalize_features, feature_mean, feature_std))
 }
 
 pub(crate) fn score_neighbors(model: &KnnClassifier, text: &str) -> Vec<(ClassificationLabel, f32)> {
     let probe = model.matrix_for_text(text);
-    let probe_row = probe.index_axis(Axis(0), 0);
-    let probe_vec = probe_row.to_vec();
+    let probe_row = probe.row(0);
+    let probe_vec: Vec<f32> = probe_row.iter().copied().collect();
+
+    // Precompute probe norm once — reused for every cosine / euclidean comparison.
+    let probe_norm_sq: f32 = probe_vec.iter().map(|v| v * v).sum();
+    let probe_norm = probe_norm_sq.sqrt();
+
     let mut ranked: Vec<(f32, ClassificationLabel)> = install_pool(model.threads(), || {
         use rayon::prelude::*;
         (0..model.matrix().shape()[0])
             .into_par_iter()
-            .map(|row| {
-                let candidate = model.matrix().index_axis(Axis(0), row);
-                let candidate_slice = candidate.as_slice().unwrap_or(&[]);
+            .map(|row_idx| {
+                let candidate = model.matrix().row(row_idx);
+                let cand: &[f32] = candidate.as_slice().unwrap_or(&[]);
                 let distance = match model.metric() {
-                    DistanceMetric::Cosine => cosine_distance(&probe_vec, candidate_slice),
-                    DistanceMetric::Euclidean => euclidean_distance(&probe_vec, candidate_slice),
-                    DistanceMetric::Manhattan => manhattan_distance(&probe_vec, candidate_slice),
-                    DistanceMetric::Minkowski(p) => minkowski_distance(&probe_vec, candidate_slice, *p),
+                    DistanceMetric::Cosine => {
+                        // Reuse pre-computed probe norm — saves one sqrt per candidate.
+                        let dot: f32 = probe_vec.iter().zip(cand).map(|(a, b)| a * b).sum();
+                        let cand_norm: f32 = cand.iter().map(|v| v * v).sum::<f32>().sqrt();
+                        if probe_norm < 1e-8 || cand_norm < 1e-8 { 1.0 }
+                        else { 1.0 - dot / (probe_norm * cand_norm) }
+                    }
+                    DistanceMetric::Euclidean => {
+                        // ||a-b||² = ||a||² - 2·a·b + ||b||²  (3 dot products, no allocation)
+                        let dot: f32 = probe_vec.iter().zip(cand).map(|(a, b)| a * b).sum();
+                        let cand_norm_sq: f32 = cand.iter().map(|v| v * v).sum();
+                        (probe_norm_sq - 2.0 * dot + cand_norm_sq).max(0.0).sqrt()
+                    }
+                    DistanceMetric::Manhattan => manhattan_distance(&probe_vec, cand),
+                    DistanceMetric::Minkowski(p) => minkowski_distance(&probe_vec, cand, *p),
                 };
-                (distance, model.labels()[row].clone())
+                (distance, model.labels()[row_idx].clone())
             })
-            .collect::<Vec<_>>()
+            .collect()
     });
 
     ranked.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Gaussian kernel weight: exp(-d) maps distance smoothly to (0, 1].
-    // No singularity, no hard clamp — safer than 1/(d+ε) for all metrics.
     let mut best: HashMap<ClassificationLabel, f32> = HashMap::new();
     let limit = model.k().min(ranked.len());
     for (distance, label) in ranked.into_iter().take(limit) {
         *best.entry(label).or_insert(0.0) += (-distance).exp();
     }
 
-    let raw: Vec<_> = best.into_iter().collect();
-    softmax_scores(&raw)
+    softmax_scores(&best.into_iter().collect::<Vec<_>>())
 }

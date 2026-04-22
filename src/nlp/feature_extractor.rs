@@ -1,4 +1,4 @@
-use ndarray::Array2;
+use ndarray::{Array1, Array2, ArrayView1};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -22,9 +22,7 @@ pub struct FastTextConfigBuilder {
 }
 
 impl FastTextConfigBuilder {
-    pub fn new() -> Self {
-        Self { min_n: 3, max_n: 5, dimensions: 32 }
-    }
+    pub fn new() -> Self { Self { min_n: 3, max_n: 5, dimensions: 32 } }
     pub fn min_n(mut self, value: usize) -> Self { self.min_n = value; self }
     pub fn max_n(mut self, value: usize) -> Self { self.max_n = value; self }
     pub fn dimensions(mut self, value: usize) -> Self { self.dimensions = value.max(1); self }
@@ -51,8 +49,8 @@ pub struct TfIdfModel {
 const DEFAULT_MIN_DF: usize = 1;
 const DEFAULT_MAX_DF_RATIO: f32 = 0.95;
 const DEFAULT_STOPWORDS: &[&str] = &[
-    "the", "is", "to", "a", "an", "and", "or", "of", "for", "in", "on", "at", "by", "with", "from",
-    "that", "this", "it", "be", "as", "are", "was", "were",
+    "the", "is", "to", "a", "an", "and", "or", "of", "for", "in", "on", "at", "by", "with",
+    "from", "that", "this", "it", "be", "as", "are", "was", "were",
 ];
 
 pub fn fit_tfidf(texts: &[String]) -> TfIdfModel {
@@ -81,7 +79,7 @@ pub fn fit_tfidf_with_config(texts: &[String], min_df: usize, max_df_ratio: f32)
     vocab.sort();
     let mut token_to_index = HashMap::new();
     for (idx, token) in vocab.iter().enumerate() { token_to_index.insert(token.clone(), idx); }
-    let mut idf = vec![0.0; vocab.len()];
+    let mut idf = vec![0.0f32; vocab.len()];
     for token in &vocab {
         let index = token_to_index[token];
         let doc_freq = *df.get(token).unwrap_or(&1) as f32;
@@ -90,9 +88,10 @@ pub fn fit_tfidf_with_config(texts: &[String], min_df: usize, max_df_ratio: f32)
     TfIdfModel { vocab, token_to_index, idf, min_df, max_df_ratio }
 }
 
-/// Transforms texts into a TF-IDF matrix.
-/// Uses sublinear TF (`1 + ln(count)`) so the scale is consistent between
-/// training and single-document inference regardless of document length.
+/// Sublinear TF-IDF transform with L2-normalised rows.
+///
+/// Uses `tf = 1 + ln(count)` (Salton & Buckley 1988) so high-frequency terms
+/// don't dominate and the scale is consistent across document lengths.
 pub fn transform_tfidf(model: &TfIdfModel, texts: &[String]) -> DenseMatrix {
     let rows = texts.len();
     let cols = model.vocab.len();
@@ -108,8 +107,6 @@ pub fn transform_tfidf(model: &TfIdfModel, texts: &[String]) -> DenseMatrix {
         }
         if counts.is_empty() { continue; }
         for (index, count) in counts {
-            // sublinear TF: avoids large counts dominating and is invariant to
-            // document length normalization, making train/inference consistent.
             let tf = 1.0 + (count as f32).ln();
             matrix[[row, index]] = tf * model.idf[index];
         }
@@ -145,49 +142,66 @@ pub fn dense_matrix_from_texts(model: &WordEmbeddingModel, texts: &[String]) -> 
     dense_matrix_from_texts_with_tfidf(model, texts, None)
 }
 
+/// IDF-weighted average of word vectors with L2-normalised rows.
+///
+/// When `tfidf_model` is supplied it must be the model fitted on the **training**
+/// corpus (never re-fitted on the probe document) so IDF weights are stationary.
 pub fn dense_matrix_from_texts_with_tfidf(
     model: &WordEmbeddingModel,
     texts: &[String],
     tfidf_model: Option<&TfIdfModel>,
 ) -> DenseMatrix {
-    let mut matrix = Array2::<f32>::zeros((texts.len(), model.dims));
-    for row in 0..texts.len() {
-        let normalized = normalize_text(&texts[row]);
+    let dims = model.dims;
+    let mut matrix = Array2::<f32>::zeros((texts.len(), dims));
+    let mut acc = Array1::<f32>::zeros(dims);
+
+    for (row_idx, text) in texts.iter().enumerate() {
+        let normalized = normalize_text(text);
         let tokens = tokenize(&normalized);
         if tokens.is_empty() { continue; }
-        let mut sum = vec![0.0f32; model.dims];
+
+        acc.fill(0.0);
         let mut weight_sum = 0.0f32;
-        for token in tokens {
-            let vector = model.vector_for(&token);
+
+        for token in &tokens {
+            let vector = model.vector_for(token);
             let idf_weight = tfidf_model
-                .and_then(|m| m.token_to_index.get(&token).map(|&idx| m.idf[idx]))
+                .and_then(|m| m.token_to_index.get(token).map(|&idx| m.idf[idx]))
                 .unwrap_or(1.0);
             weight_sum += idf_weight;
-            for d in 0..model.dims { sum[d] += vector[d] * idf_weight; }
+            // Fused scaled accumulation — SIMD-vectorised by LLVM.
+            ndarray::Zip::from(&mut acc)
+                .and(ArrayView1::from(vector.as_slice()))
+                .for_each(|a, &v| *a += v * idf_weight);
         }
+
         let denom = weight_sum.max(1e-6);
-        for d in 0..model.dims { matrix[[row, d]] = sum[d] / denom; }
-        l2_normalize_row(&mut matrix, row);
+        matrix.row_mut(row_idx).assign(&acc.mapv(|v| v / denom));
+        l2_normalize_row(&mut matrix, row_idx);
     }
     matrix
 }
 
+/// In-place L2 row normalisation.
+///
+/// `r.dot(&r)` is a BLAS sdot call when the `blas` feature is enabled;
+/// otherwise LLVM auto-vectorises the reduction.
 fn l2_normalize_row(matrix: &mut DenseMatrix, row: usize) {
-    let norm = (0..matrix.shape()[1])
-        .map(|c| { let v = matrix[[row, c]]; v * v })
-        .sum::<f32>()
-        .sqrt();
-    if norm > 0.0 {
-        for c in 0..matrix.shape()[1] { matrix[[row, c]] /= norm; }
+    let norm = {
+        let r = matrix.row(row);
+        r.dot(&r).sqrt()
+    };
+    if norm > 1e-12 {
+        matrix.row_mut(row).mapv_inplace(|v| v / norm);
     }
 }
 
+// ── Skip-gram training ────────────────────────────────────────────────────────
+
 /// Skip-gram with separate W_in / W_out matrices and true random negative sampling.
 ///
-/// Using two embedding matrices is the standard Skip-gram formulation (Mikolov 2013):
-/// W_in encodes the center word, W_out encodes context words.  Sharing a single
-/// matrix couples the gradients and degrades quality.  We return W_in as the
-/// final word representation, which is the common practice.
+/// Two embedding matrices (Mikolov 2013): W_in encodes center words, W_out
+/// encodes context words.  Only W_in is returned as the final representation.
 fn train_context_embeddings(
     texts: &[String],
     dims: usize,
@@ -199,7 +213,7 @@ fn train_context_embeddings(
     let epochs = 6usize;
     let learning_rate = 0.05f32;
 
-    // --- build vocab + corpus ---
+    // ── vocab + indexed corpus ──────────────────────────────────────────────
     let mut vocab_counts: HashMap<String, usize> = HashMap::new();
     let mut flat_tokens: Vec<Vec<String>> = Vec::new();
     for text in texts {
@@ -213,11 +227,8 @@ fn train_context_embeddings(
     vocab_list.sort();
     if vocab_list.is_empty() { return HashMap::new(); }
 
-    let vocab_to_idx: HashMap<String, usize> = vocab_list
-        .iter()
-        .enumerate()
-        .map(|(i, t)| (t.clone(), i))
-        .collect();
+    let vocab_to_idx: HashMap<String, usize> =
+        vocab_list.iter().enumerate().map(|(i, t)| (t.clone(), i)).collect();
     let corpus: Vec<Vec<usize>> = flat_tokens
         .iter()
         .filter_map(|tokens| {
@@ -226,13 +237,12 @@ fn train_context_embeddings(
         })
         .collect();
 
-    // --- two separate embedding matrices ---
-    // W_in: center-word embeddings, initialised deterministically for reproducibility.
-    // W_out: context embeddings, zero-initialised (standard practice).
+    // ── embedding matrices ─────────────────────────────────────────────────
+    // W_in: deterministic init; W_out: zero-init (standard Skip-gram).
     let mut w_in: Vec<Vec<f32>> = vocab_list.iter().map(|t| deterministic_vector(t, dims)).collect();
     let mut w_out = vec![vec![0.0f32; dims]; vocab_list.len()];
 
-    // Noise distribution P(w)^(3/4) for negative sampling (Mikolov 2013)
+    // Unigram noise distribution P(w)^0.75 stored as a CDF for O(log V) sampling.
     let mut noise_cdf = Vec::with_capacity(vocab_list.len());
     let mut running = 0.0f32;
     for token in &vocab_list {
@@ -244,7 +254,6 @@ fn train_context_embeddings(
     let mut rng = StdRng::seed_from_u64(0x57A9_C0DE);
 
     for _ in 0..epochs {
-        // shuffle corpus order each epoch to avoid order bias
         let mut order: Vec<usize> = (0..corpus.len()).collect();
         order.shuffle(&mut rng);
 
@@ -256,7 +265,8 @@ fn train_context_embeddings(
                 for ctx_pos in start..end {
                     if ctx_pos == pos { continue; }
                     let ctx = tokens[ctx_pos];
-                    update_skipgram(&mut w_in, &mut w_out, center, ctx, learning_rate, 1.0);
+                    let scale = skipgram_scale(&w_in, &w_out, center, ctx, learning_rate, 1.0);
+                    update_skipgram(&mut w_in, &mut w_out, center, ctx, scale);
                     for _ in 0..n_negatives {
                         let mass = rng.random_range(0.0f32..noise_total);
                         let neg = noise_cdf
@@ -264,7 +274,8 @@ fn train_context_embeddings(
                             .unwrap_or_else(|i| i)
                             .min(noise_cdf.len().saturating_sub(1));
                         if neg != ctx {
-                            update_skipgram(&mut w_in, &mut w_out, center, neg, learning_rate, 0.0);
+                            let scale = skipgram_scale(&w_in, &w_out, center, neg, learning_rate, 0.0);
+                            update_skipgram(&mut w_in, &mut w_out, center, neg, scale);
                         }
                     }
                 }
@@ -272,48 +283,85 @@ fn train_context_embeddings(
         }
     }
 
-    // Optional FastText subword enrichment applied to W_in
+    // Optional FastText subword enrichment — blend subword mean into W_in.
     if let Some(cfg) = fasttext {
         for (token, vec) in vocab_list.iter().zip(w_in.iter_mut()) {
             let sub = fasttext_vector(token, dims, cfg);
-            for d in 0..dims { vec[d] += sub[d] * 0.15; }
+            for (v, s) in vec.iter_mut().zip(sub.iter()) { *v += s * 0.15; }
         }
     }
 
-    // L2-normalise the final input embeddings
+    // L2-normalise W_in before returning.
     for vec in &mut w_in {
-        let norm = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
-        if norm > 0.0 { for v in vec.iter_mut() { *v /= norm; } }
+        let norm: f32 = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if norm > 1e-12 {
+            vec.iter_mut().for_each(|v| *v /= norm);
+        }
     }
 
     vocab_list.into_iter().zip(w_in).collect()
 }
 
-/// Separate W_in / W_out gradient update for one (center, context/negative) pair.
+/// Compute `lr × error` for one (center, ctx/neg) pair.
+///
+/// Pre-fusing this scalar lets `update_skipgram` receive a single `scale`
+/// argument and avoids recomputing the sigmoid in the hot path.
+#[inline(always)]
+fn skipgram_scale(
+    w_in: &[Vec<f32>],
+    w_out: &[Vec<f32>],
+    center: usize,
+    ctx: usize,
+    lr: f32,
+    target: f32,
+) -> f32 {
+    let dot: f32 = w_in[center].iter().zip(w_out[ctx].iter()).map(|(a, b)| a * b).sum();
+    lr * (target - 1.0 / (1.0 + (-dot).exp()))
+}
+
+/// Simultaneous W_in / W_out gradient update for one (center, context) pair.
+///
+/// Strategy: copy the pre-update `w_out[ctx]` into a stack buffer (embeddings
+/// are typically 32–256 dims, so 2 KB max), then run two independent passes.
+/// Each pass is a pure `zip` with no aliasing, so LLVM can emit SIMD
+/// multiply-add instructions without any unsafe code.
+#[inline(always)]
 fn update_skipgram(
     w_in: &mut [Vec<f32>],
     w_out: &mut [Vec<f32>],
     center: usize,
     ctx: usize,
-    lr: f32,
-    target: f32,
+    scale: f32,
 ) {
     if center >= w_in.len() || ctx >= w_out.len() { return; }
-    let dot: f32 = w_in[center].iter().zip(w_out[ctx].iter()).map(|(a, b)| a * b).sum();
-    let error = target - (1.0 / (1.0 + (-dot).exp()));
-    let dims = w_in[center].len();
-    for d in 0..dims {
-        let g_in  = lr * error * w_out[ctx][d];
-        let g_out = lr * error * w_in[center][d];
-        w_in[center][d]  += g_in;
-        w_out[ctx][d]    += g_out;
+    let dims = w_in[center].len().min(w_out[ctx].len());
+
+    // Stack buffer avoids a heap allocation on every call (≤ 512 dims = 2 KB).
+    const STACK_CAP: usize = 512;
+    if dims <= STACK_CAP {
+        let mut buf = [0.0f32; STACK_CAP];
+        buf[..dims].copy_from_slice(&w_out[ctx][..dims]);   // snapshot of w_out
+
+        // Pass 1 (SIMD): w_out[ctx] += scale * w_in[center]  (cross-param borrow — no conflict)
+        for (wo, &wi) in w_out[ctx][..dims].iter_mut().zip(w_in[center][..dims].iter()) {
+            *wo += scale * wi;
+        }
+        // Pass 2 (SIMD): w_in[center] += scale * original w_out (from stack buf)
+        for (wi, &wo) in w_in[center][..dims].iter_mut().zip(buf[..dims].iter()) {
+            *wi += scale * wo;
+        }
+    } else {
+        // Heap fallback for unusually large embeddings (> 512 dims).
+        let wo_orig: Vec<f32> = w_out[ctx].clone();
+        for (wo, &wi) in w_out[ctx].iter_mut().zip(w_in[center].iter()) { *wo += scale * wi; }
+        for (wi, &wo) in w_in[center].iter_mut().zip(wo_orig.iter()) { *wi += scale * wo; }
     }
 }
 
 fn deterministic_vector(token: &str, dims: usize) -> Vec<f32> {
     let mut seed = 0u64;
     for b in token.as_bytes() { seed = seed.wrapping_mul(131).wrapping_add(*b as u64 + 17); }
-    let mut vector = vec![0.0; dims];
+    let mut vector = vec![0.0f32; dims];
     for item in vector.iter_mut() {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
         let raw = ((seed >> 32) as u32) as f32 / u32::MAX as f32;
@@ -332,11 +380,11 @@ fn fasttext_vector(token: &str, dims: usize, cfg: &FastTextConfig) -> Vec<f32> {
         for i in 0..=(chars.len() - n) {
             let gram: String = chars[i..i + n].iter().collect();
             let v = deterministic_vector(&gram, dims);
-            for d in 0..dims { sum[d] += v[d]; }
+            for (s, gv) in sum.iter_mut().zip(v.iter()) { *s += gv; }
             count += 1.0;
         }
     }
     if count == 0.0 { return deterministic_vector(&token, dims); }
-    for item in sum.iter_mut() { *item /= count; }
+    sum.iter_mut().for_each(|v| *v /= count);
     sum
 }

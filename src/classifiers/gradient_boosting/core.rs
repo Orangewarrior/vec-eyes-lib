@@ -1,6 +1,5 @@
 use ndarray::Axis;
 use rayon::prelude::*;
-use rand::{rngs::StdRng, RngExt, SeedableRng};
 
 use crate::advanced_models::LabelEncoder;
 use crate::classifier::softmax_scores;
@@ -24,45 +23,59 @@ impl RegStump {
     }
 }
 
+/// Fit a regression stump using sorted quantile splits.
+///
+/// For each feature the unique values are sorted, midpoints between adjacent
+/// unique values form the candidate thresholds (up to 32 candidates for
+/// efficiency — equivalent to a 32-bin histogram).  This is deterministic and
+/// finds strictly better splits than random jitter over `[min, max]`.
 fn fit_regression_stump(x: &DenseMatrix, residual: &[f32]) -> RegStump {
     let rows = x.shape()[0];
     let cols = x.shape()[1];
     let mut best = RegStump { feature: 0, threshold: 0.0, left_value: 0.0, right_value: 0.0 };
     let mut best_loss = f32::INFINITY;
-    let mut rng = StdRng::seed_from_u64(0x51A7E);
+    let lambda = 1.0f32; // L2 leaf regulariser
 
     for feature in 0..cols {
-        let min_v = (0..rows).map(|r| x[[r, feature]]).fold(f32::INFINITY, f32::min);
-        let max_v = (0..rows).map(|r| x[[r, feature]]).fold(f32::NEG_INFINITY, f32::max);
-        if !min_v.is_finite() || !max_v.is_finite() || (max_v - min_v).abs() < 1e-6 {
-            continue;
+        // Collect sorted (value, residual_index) pairs for this feature
+        let mut order: Vec<usize> = (0..rows).collect();
+        order.sort_by(|&a, &b| x[[a, feature]].partial_cmp(&x[[b, feature]]).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Build midpoint candidates between adjacent unique values (max 32)
+        let mut candidates: Vec<f32> = Vec::new();
+        let mut prev = x[[order[0], feature]];
+        for &row in order.iter().skip(1) {
+            let v = x[[row, feature]];
+            if (v - prev).abs() > 1e-7 {
+                candidates.push((prev + v) * 0.5);
+                prev = v;
+            }
         }
-        let candidates = 12usize.min(rows.max(1));
-        let thresholds: Vec<f32> = (0..candidates)
-            .map(|idx| {
-                let jitter = rng.random_range(0.0..1.0);
-                min_v + ((idx as f32 + jitter) / candidates as f32) * (max_v - min_v)
-            })
-            .collect();
-        for threshold in thresholds {
-            let mut left = Vec::new();
-            let mut right = Vec::new();
-            for row in 0..rows {
-                if x[[row, feature]] <= threshold { left.push(residual[row]); } else { right.push(residual[row]); }
+        if candidates.is_empty() { continue; }
+
+        // Sub-sample to at most 32 candidates for efficiency with wide feature sets
+        let step = (candidates.len() / 32).max(1);
+        let candidates: Vec<f32> = candidates.into_iter().step_by(step).collect();
+
+        for threshold in candidates {
+            let (mut l_sum, mut l_cnt, mut r_sum, mut r_cnt) = (0.0f32, 0usize, 0.0f32, 0usize);
+            for r in 0..rows {
+                if x[[r, feature]] <= threshold { l_sum += residual[r]; l_cnt += 1; }
+                else                            { r_sum += residual[r]; r_cnt += 1; }
             }
-            if left.is_empty() || right.is_empty() { continue; }
-            let lambda = 1.0f32;
-            let left_mean = left.iter().sum::<f32>() / (left.len() as f32 + lambda);
-            let right_mean = right.iter().sum::<f32>() / (right.len() as f32 + lambda);
-            let mut loss = 0.0;
-            for row in 0..rows {
-                let pred = if x[[row, feature]] <= threshold { left_mean } else { right_mean };
-                let diff = residual[row] - pred;
-                loss += diff * diff;
-            }
+            if l_cnt == 0 || r_cnt == 0 { continue; }
+            let l_mean = l_sum / (l_cnt as f32 + lambda);
+            let r_mean = r_sum / (r_cnt as f32 + lambda);
+            let loss: f32 = (0..rows)
+                .map(|r| {
+                    let pred = if x[[r, feature]] <= threshold { l_mean } else { r_mean };
+                    let d = residual[r] - pred;
+                    d * d
+                })
+                .sum();
             if loss < best_loss {
                 best_loss = loss;
-                best = RegStump { feature, threshold, left_value: left_mean, right_value: right_mean };
+                best = RegStump { feature, threshold, left_value: l_mean, right_value: r_mean };
             }
         }
     }
@@ -82,18 +95,16 @@ impl BinaryGradientBoosting {
         let negative = (y.len() as f32 - positive).max(1.0);
         let base_score = (positive / negative).ln();
         let mut logits = vec![base_score; y.len()];
-        let mut stumps = Vec::new();
+        let mut stumps = Vec::with_capacity(rounds);
         for _ in 0..rounds {
-            let residual: Vec<f32> = (0..y.len())
-                .map(|idx| {
-                    let p = 1.0 / (1.0 + (-logits[idx]).exp());
-                    y[idx] - p
-                })
+            let residual: Vec<f32> = logits
+                .iter()
+                .zip(y.iter())
+                .map(|(&logit, &target)| target - 1.0 / (1.0 + (-logit).exp()))
                 .collect();
             let stump = fit_regression_stump(x, &residual);
             for row in 0..y.len() {
-                let row_vec = x.index_axis(Axis(0), row).to_vec();
-                logits[row] += learning_rate * stump.predict_row(&row_vec);
+                logits[row] += learning_rate * stump.predict_row(x.index_axis(Axis(0), row).as_slice().unwrap_or(&[]));
             }
             stumps.push(stump);
         }
@@ -101,10 +112,7 @@ impl BinaryGradientBoosting {
     }
 
     fn predict_score(&self, row: &[f32]) -> f32 {
-        let mut logit = self.base_score;
-        for stump in &self.stumps {
-            logit += self.learning_rate * stump.predict_row(row);
-        }
+        let logit = self.stumps.iter().fold(self.base_score, |acc, s| acc + self.learning_rate * s.predict_row(row));
         1.0 / (1.0 + (-logit).exp())
     }
 }
@@ -116,14 +124,23 @@ pub(crate) struct GradientBoostingModel {
 }
 
 impl GradientBoostingModel {
-    pub(crate) fn fit(matrix: &DenseMatrix, samples: &[TrainingSample], rounds: usize, learning_rate: f32, threads: Option<usize>) -> Result<Self, VecEyesError> {
+    pub(crate) fn fit(
+        matrix: &DenseMatrix,
+        samples: &[TrainingSample],
+        rounds: usize,
+        learning_rate: f32,
+        threads: Option<usize>,
+    ) -> Result<Self, VecEyesError> {
         let encoder = LabelEncoder::fit(samples);
-        let y_idx: Vec<usize> = samples.iter().map(|s| encoder.encode(&s.label)).collect::<Result<_, _>>()?;
+        let y_idx: Vec<usize> = samples
+            .iter()
+            .map(|s| encoder.encode(&s.label))
+            .collect::<Result<_, _>>()?;
         let models: Vec<BinaryGradientBoosting> = install_pool(threads, || {
             (0..encoder.labels.len())
                 .into_par_iter()
                 .map(|class_id| {
-                    let targets: Vec<f32> = y_idx.iter().map(|&idx| if idx == class_id { 1.0 } else { 0.0 }).collect();
+                    let targets: Vec<f32> = y_idx.iter().map(|&i| if i == class_id { 1.0 } else { 0.0 }).collect();
                     BinaryGradientBoosting::fit(matrix, &targets, rounds, learning_rate)
                 })
                 .collect()
@@ -136,7 +153,7 @@ impl GradientBoostingModel {
         let raw: Vec<(ClassificationLabel, f32)> = self.models
             .iter()
             .enumerate()
-            .map(|(idx, model)| (self.encoder.decode(idx), model.predict_score(&row).max(1e-6).ln()))
+            .map(|(idx, model)| (self.encoder.decode(idx), model.predict_score(&row).max(1e-9).ln()))
             .collect();
         softmax_scores(&raw)
     }

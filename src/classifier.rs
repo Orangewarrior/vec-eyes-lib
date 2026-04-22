@@ -486,7 +486,7 @@ pub fn run_rules_pipeline(
             title_object: file.file_name().and_then(|x| x.to_str()).unwrap_or("object").to_string(),
             name_file_dataset: file.to_string_lossy().to_string(),
             date_of_occurrence: Utc::now(),
-            score_percent: top_score,
+            score_percent: top_score * 100.0,
             match_titles: hit_titles.join(","),
             classify_names_list: labels.join(","),
         });
@@ -515,10 +515,8 @@ pub(crate) fn softmax_scores(input: &[(ClassificationLabel, f32)]) -> Vec<(Class
         exp_values.push((label.clone(), value));
     }
 
-    let mut output = Vec::new();
-    for (label, value) in exp_values {
-        let pct = if sum > 0.0 { (value / sum) * 100.0 } else { 0.0 };
-        output.push((label, pct));
-    }
-    output
+    exp_values
+        .into_iter()
+        .map(|(label, value)| (label, if sum > 0.0 { value / sum } else { 0.0 }))
+        .collect()
 }

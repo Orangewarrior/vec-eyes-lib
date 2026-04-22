@@ -76,11 +76,12 @@ pub(crate) fn score_neighbors(model: &KnnClassifier, text: &str) -> Vec<(Classif
 
     ranked.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
+    // Gaussian kernel weight: exp(-d) maps distance smoothly to (0, 1].
+    // No singularity, no hard clamp — safer than 1/(d+ε) for all metrics.
     let mut best: HashMap<ClassificationLabel, f32> = HashMap::new();
     let limit = model.k().min(ranked.len());
     for (distance, label) in ranked.into_iter().take(limit) {
-        let score = (1.0 / (distance + 1e-6)).min(1000.0);
-        *best.entry(label).or_insert(0.0) += score;
+        *best.entry(label).or_insert(0.0) += (-distance).exp();
     }
 
     let raw: Vec<_> = best.into_iter().collect();

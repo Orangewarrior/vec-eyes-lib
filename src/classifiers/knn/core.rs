@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::classifier::softmax_scores;
-use crate::classifiers::knn::{manhattan_distance, minkowski_distance, DenseFeatureModel, DistanceMetric, KnnClassifier};
+use crate::classifiers::knn::{euclidean_distance_squared, manhattan_distance, minkowski_distance, DenseFeatureModel, DistanceMetric, KnnClassifier};
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
@@ -89,10 +89,7 @@ pub(crate) fn score_neighbors(model: &KnnClassifier, text: &str) -> Vec<(Classif
                         else { 1.0 - dot / (probe_norm * cand_norm) }
                     }
                     DistanceMetric::Euclidean => {
-                        // ||a-b||² = ||a||² - 2·a·b + ||b||²  (3 dot products, no allocation)
-                        let dot: f32 = probe_vec.iter().zip(cand).map(|(a, b)| a * b).sum();
-                        let cand_norm_sq: f32 = cand.iter().map(|v| v * v).sum();
-                        (probe_norm_sq - 2.0 * dot + cand_norm_sq).max(0.0).sqrt()
+                        euclidean_distance_squared(&probe_vec, cand, probe_norm_sq).sqrt()
                     }
                     DistanceMetric::Manhattan => manhattan_distance(&probe_vec, cand),
                     DistanceMetric::Minkowski(p) => minkowski_distance(&probe_vec, cand, *p),

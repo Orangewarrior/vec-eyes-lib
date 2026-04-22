@@ -53,15 +53,15 @@ const DEFAULT_STOPWORDS: &[&str] = &[
     "from", "that", "this", "it", "be", "as", "are", "was", "were",
 ];
 
-pub fn fit_tfidf(texts: &[String]) -> TfIdfModel {
+pub fn fit_tfidf<T: AsRef<str>>(texts: &[T]) -> TfIdfModel {
     fit_tfidf_with_config(texts, DEFAULT_MIN_DF, DEFAULT_MAX_DF_RATIO)
 }
 
-pub fn fit_tfidf_with_config(texts: &[String], min_df: usize, max_df_ratio: f32) -> TfIdfModel {
+pub fn fit_tfidf_with_config<T: AsRef<str>>(texts: &[T], min_df: usize, max_df_ratio: f32) -> TfIdfModel {
     let mut df: HashMap<String, usize> = HashMap::new();
     let stopwords: HashSet<&str> = DEFAULT_STOPWORDS.iter().copied().collect();
     for text in texts {
-        let normalized = normalize_text(text);
+        let normalized = normalize_text(text.as_ref());
         let tokens = tokenize(&normalized);
         let mut seen = HashSet::new();
         for token in &tokens {
@@ -186,13 +186,13 @@ pub fn dense_matrix_from_texts_with_tfidf(
 ///
 /// `r.dot(&r)` is a BLAS sdot call when the `blas` feature is enabled;
 /// otherwise LLVM auto-vectorises the reduction.
+#[inline(always)]
 fn l2_normalize_row(matrix: &mut DenseMatrix, row: usize) {
-    let norm = {
-        let r = matrix.row(row);
-        r.dot(&r).sqrt()
-    };
+    let r = matrix.row(row);
+    let norm = r.dot(&r).sqrt();
     if norm > 1e-12 {
-        matrix.row_mut(row).mapv_inplace(|v| v / norm);
+        let inv_norm = 1.0 / norm;
+        matrix.row_mut(row).mapv_inplace(|v| v * inv_norm);
     }
 }
 

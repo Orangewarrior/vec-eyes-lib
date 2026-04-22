@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 const MAX_DISCOVERED_FILES: usize = 10_000;
-const MAX_TEXT_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Default maximum size for text files loaded as training data (8 MiB).
+/// Can be overridden via [`RulesFile::max_text_file_bytes`] for industrial use cases.
+const DEFAULT_MAX_TEXT_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct TrainingSample {
@@ -17,15 +20,19 @@ pub struct TrainingSample {
 }
 
 pub fn read_text_file(path: &Path) -> Result<String, VecEyesError> {
+    read_text_file_with_limit(path, DEFAULT_MAX_TEXT_FILE_BYTES)
+}
+
+pub fn read_text_file_with_limit(path: &Path, max_bytes: u64) -> Result<String, VecEyesError> {
     let canonical = sanitize_existing_path(path)?;
     let metadata = fs::metadata(&canonical)?;
-    if metadata.len() > MAX_TEXT_FILE_BYTES {
+    if metadata.len() > max_bytes {
         return Err(VecEyesError::invalid_config(
-            "dataset::read_text_file",
+            "dataset::read_text_file_with_limit",
             format!(
                 "file {} exceeds the maximum allowed size of {} bytes",
                 canonical.display(),
-                MAX_TEXT_FILE_BYTES
+                max_bytes
             ),
         ));
     }
@@ -36,29 +43,37 @@ pub fn collect_files_recursively(
     root: &Path,
     recursive: bool,
 ) -> Result<Vec<PathBuf>, VecEyesError> {
+    collect_files_recursively_with_limit(root, recursive, DEFAULT_MAX_TEXT_FILE_BYTES)
+}
+
+pub fn collect_files_recursively_with_limit(
+    root: &Path,
+    recursive: bool,
+    max_bytes: u64,
+) -> Result<Vec<PathBuf>, VecEyesError> {
     let mut files = Vec::new();
     if recursive {
         let root = sanitize_existing_path(root)?;
         for entry in WalkDir::new(&root).follow_links(false) {
-            let entry = entry.map_err(|e| VecEyesError::invalid_config("dataset::collect_files_recursively", e.to_string()))?;
+            let entry = entry.map_err(|e| VecEyesError::invalid_config("dataset::collect_files_recursively_with_limit", e.to_string()))?;
             if entry.file_type().is_file() {
                 let metadata = entry.metadata().map_err(|e| {
-                    VecEyesError::invalid_config("dataset::collect_files_recursively", format!("metadata read failed for {}: {}", entry.path().display(), e))
+                    VecEyesError::invalid_config("dataset::collect_files_recursively_with_limit", format!("metadata read failed for {}: {}", entry.path().display(), e))
                 })?;
-                if metadata.len() > MAX_TEXT_FILE_BYTES {
+                if metadata.len() > max_bytes {
                     return Err(VecEyesError::invalid_config(
-                        "dataset::collect_files_recursively",
+                        "dataset::collect_files_recursively_with_limit",
                         format!(
                             "file {} exceeds the maximum allowed size of {} bytes",
                             entry.path().display(),
-                            MAX_TEXT_FILE_BYTES
+                            max_bytes
                         ),
                     ));
                 }
                 files.push(entry.path().to_path_buf());
                 if files.len() > MAX_DISCOVERED_FILES {
                     return Err(VecEyesError::invalid_config(
-                        "dataset::collect_files_recursively",
+                        "dataset::collect_files_recursively_with_limit",
                         format!("discovered more than {} files under {}", MAX_DISCOVERED_FILES, root.display()),
                     ));
                 }
@@ -70,20 +85,20 @@ pub fn collect_files_recursively(
             let entry = entry?;
             if entry.file_type()?.is_file() {
                 let metadata = entry.metadata()?;
-                if metadata.len() > MAX_TEXT_FILE_BYTES {
+                if metadata.len() > max_bytes {
                     return Err(VecEyesError::invalid_config(
-                        "dataset::collect_files_recursively",
+                        "dataset::collect_files_recursively_with_limit",
                         format!(
                             "file {} exceeds the maximum allowed size of {} bytes",
                             entry.path().display(),
-                            MAX_TEXT_FILE_BYTES
+                            max_bytes
                         ),
                     ));
                 }
                 files.push(entry.path());
                 if files.len() > MAX_DISCOVERED_FILES {
                     return Err(VecEyesError::invalid_config(
-                        "dataset::collect_files_recursively",
+                        "dataset::collect_files_recursively_with_limit",
                         format!("discovered more than {} files in {}", MAX_DISCOVERED_FILES, root.display()),
                     ));
                 }

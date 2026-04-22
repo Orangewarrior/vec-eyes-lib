@@ -239,6 +239,16 @@ impl ScoringEngine {
         (total.min(100.0), hits)
     }
 
+    /// Collects only the hits without computing the total boost score.
+    /// Useful when ScoreSumMode::Off to avoid unnecessary score accumulation.
+    pub fn find_matches_only(text: &str, matchers: &[Box<dyn RuleMatcher>]) -> Vec<AlertHit> {
+        let mut hits = Vec::new();
+        for matcher in matchers {
+            hits.extend(matcher.find_matches(text));
+        }
+        hits
+    }
+
     /// Merges a base probability in `[0,1]` with an additive rule boost.
     /// Rule scores are kept in a user-friendly `[0, 100]` scale in rule files;
     /// they are divided by 100 here so the result stays in `[0, 1]`.

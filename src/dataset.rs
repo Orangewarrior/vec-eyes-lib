@@ -7,10 +7,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 const MAX_DISCOVERED_FILES: usize = 10_000;
-
-/// Default maximum size for text files loaded as training data (8 MiB).
-/// Can be overridden via [`RulesFile::max_text_file_bytes`] for industrial use cases.
-const DEFAULT_MAX_TEXT_FILE_BYTES: u64 = 8 * 1024 * 1024;
+pub const DEFAULT_MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct TrainingSample {
@@ -19,16 +16,12 @@ pub struct TrainingSample {
     pub source_name: String,
 }
 
-pub fn read_text_file(path: &Path) -> Result<String, VecEyesError> {
-    read_text_file_with_limit(path, DEFAULT_MAX_TEXT_FILE_BYTES)
-}
-
-pub fn read_text_file_with_limit(path: &Path, max_bytes: u64) -> Result<String, VecEyesError> {
+pub fn read_text_file_limited(path: &Path, max_bytes: u64) -> Result<String, VecEyesError> {
     let canonical = sanitize_existing_path(path)?;
     let metadata = fs::metadata(&canonical)?;
     if metadata.len() > max_bytes {
         return Err(VecEyesError::invalid_config(
-            "dataset::read_text_file_with_limit",
+            "dataset::read_text_file_limited",
             format!(
                 "file {} exceeds the maximum allowed size of {} bytes",
                 canonical.display(),
@@ -39,11 +32,15 @@ pub fn read_text_file_with_limit(path: &Path, max_bytes: u64) -> Result<String, 
     Ok(fs::read_to_string(canonical)?)
 }
 
+pub fn read_text_file(path: &Path) -> Result<String, VecEyesError> {
+    read_text_file_limited(path, DEFAULT_MAX_FILE_BYTES)
+}
+
 pub fn collect_files_recursively(
     root: &Path,
     recursive: bool,
 ) -> Result<Vec<PathBuf>, VecEyesError> {
-    collect_files_recursively_with_limit(root, recursive, DEFAULT_MAX_TEXT_FILE_BYTES)
+    collect_files_recursively_with_limit(root, recursive, DEFAULT_MAX_FILE_BYTES)
 }
 
 pub fn collect_files_recursively_with_limit(

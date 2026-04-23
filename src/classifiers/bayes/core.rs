@@ -1,7 +1,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::classifier::softmax_scores;
+use crate::math::softmax_scores;
 use crate::classifiers::bayes::BayesClassifier;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
@@ -14,7 +14,6 @@ pub(crate) fn train(samples: &[TrainingSample], nlp: NlpOption, threads: Option<
     let mut token_totals: HashMap<ClassificationLabel, f32> = HashMap::new();
     let mut label_counts: HashMap<ClassificationLabel, usize> = HashMap::new();
     let mut vocab = HashSet::new();
-    // Avoid cloning all texts upfront; collect references instead for TF-IDF fitting
     let text_refs: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
     // Fit TF-IDF on the training corpus; the stored IDF is later used as a
     // stationary token weight during inference (not refitted on the probe).

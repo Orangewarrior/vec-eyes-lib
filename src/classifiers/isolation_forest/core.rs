@@ -2,12 +2,12 @@ use ndarray::Axis;
 use rand::prelude::*;
 use rayon::prelude::*;
 
-use crate::classifier::softmax_scores;
+use crate::math::softmax_scores;
 use crate::labels::ClassificationLabel;
 use crate::nlp::DenseMatrix;
 use crate::parallel::install_pool;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct IsolationNode {
     feature: usize,
     threshold: f32,
@@ -69,7 +69,7 @@ fn build_isolation_tree(x: &DenseMatrix, rows: &[usize], depth: usize, max_depth
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct IsolationForestModel {
     trees: Vec<IsolationNode>,
     threshold: f32,

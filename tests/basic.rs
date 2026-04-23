@@ -95,6 +95,7 @@ fn yaml_pipeline_runs_and_exports_report() {
         isolation_forest_n_trees: None,
         isolation_forest_contamination: None,
         isolation_forest_subsample_size: None,
+        max_file_bytes: None,
     };
 
     let report = run_rules_pipeline(&rules_file, &classify_dir).unwrap();
@@ -146,6 +147,7 @@ fn yaml_validation_rejects_knn_without_k() {
         isolation_forest_n_trees: None,
         isolation_forest_contamination: None,
         isolation_forest_subsample_size: None,
+        max_file_bytes: None,
     };
 
     assert!(rules_file.validate().is_err());
@@ -201,6 +203,7 @@ fn yaml_threads_field_is_validated_and_builds() -> Result<(), Box<dyn std::error
         isolation_forest_n_trees: None,
         isolation_forest_contamination: None,
         isolation_forest_subsample_size: None,
+        max_file_bytes: None,
     };
 
     rules.validate()?;

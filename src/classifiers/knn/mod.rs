@@ -189,13 +189,13 @@ pub fn build(self) -> Result<KnnClassifier, VecEyesError> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DenseFeatureModel {
     Word2Vec(WordEmbeddingModel),
     FastText(WordEmbeddingModel),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct KnnClassifier {
     metric: DistanceMetric,
     threads: Option<usize>,
@@ -241,8 +241,23 @@ impl KnnClassifier {
         core::train(samples, nlp, metric, dims, k, threads, normalize_features)
     }
 
+    /// Persist the trained model to a JSON file.
+    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
+        let json = serde_json::to_string(self)
+            .map_err(|e| VecEyesError::invalid_config("KnnClassifier::save", e.to_string()))?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    /// Load a previously saved model from a JSON file.
+    pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
+        let json = std::fs::read_to_string(path)?;
+        serde_json::from_str(&json)
+            .map_err(|e| VecEyesError::invalid_config("KnnClassifier::load", e.to_string()))
+    }
+
     pub(crate) fn matrix_for_text(&self, text: &str) -> DenseMatrix {
-        let texts = vec![text.to_string()];
+        let texts = [text];
         match &self.model {
             DenseFeatureModel::Word2Vec(inner) => { let mut m = dense_matrix_from_texts(inner, &texts); self.apply_feature_normalization(&mut m); m },
             DenseFeatureModel::FastText(inner) => { let mut m = dense_matrix_from_texts(inner, &texts); self.apply_feature_normalization(&mut m); m },
@@ -274,12 +289,15 @@ impl Classifier for KnnClassifier {
         matchers: &[Box<dyn RuleMatcher>],
     ) -> ClassificationResult {
         let mut labels = self.score_neighbors(text);
-        let (boost, hits) = ScoringEngine::compute_rule_boost(text, matchers);
-        if score_sum_mode.is_on() {
+        let hits = if score_sum_mode.is_on() {
+            let (boost, hits) = ScoringEngine::compute_rule_boost(text, matchers);
             for (_, score) in &mut labels {
                 *score = ScoringEngine::merge_scores(*score, boost, score_sum_mode);
             }
-        }
+            hits
+        } else {
+            matchers.iter().flat_map(|m| m.find_matches(text)).collect()
+        };
         labels.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         ClassificationResult { labels, extra_hits: hits }
     }

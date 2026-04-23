@@ -10,6 +10,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 
+#[deprecated(since = "2.8.0", note = "use `NlpOption` from the `nlp` module instead")]
 #[derive(Debug, Clone, Copy)]
 pub enum RepresentationKind {
     Count,
@@ -18,17 +19,20 @@ pub enum RepresentationKind {
     FastText,
 }
 
+#[deprecated(since = "2.8.0", note = "configure NLP directly via `ClassifierFactory::builder().nlp(NlpOption::...)`")]
 #[derive(Debug, Clone)]
 pub struct NlpPipeline {
     pub representation: RepresentationKind,
     pub fasttext_config: Option<FastTextConfig>,
 }
 
+#[deprecated(since = "2.8.0", note = "use `ClassifierFactory::builder().nlp(...)` instead")]
 pub struct NlpPipelineBuilder {
     representation: Option<RepresentationKind>,
     fasttext_config: Option<FastTextConfig>,
 }
 
+#[allow(deprecated)]
 impl Builder<NlpPipeline> for NlpPipelineBuilder {
     fn new() -> Self {
         Self {
@@ -45,6 +49,7 @@ impl Builder<NlpPipeline> for NlpPipelineBuilder {
     }
 }
 
+#[allow(deprecated)]
 impl NlpPipelineBuilder {
     pub fn new() -> Self { <Self as Builder<NlpPipeline>>::new() }
     pub fn build(self) -> Result<NlpPipeline, VecEyesError> { <Self as Builder<NlpPipeline>>::build(self) }
@@ -60,11 +65,13 @@ impl NlpPipelineBuilder {
     }
 }
 
+#[deprecated(since = "2.8.0", note = "output handling is no longer needed; remove this from your code")]
 #[derive(Debug, Clone, Default)]
 pub struct OutputWriters {
     disabled: bool,
 }
 
+#[allow(deprecated)]
 impl OutputWriters {
     pub fn disabled() -> Self {
         Self { disabled: true }
@@ -88,6 +95,7 @@ pub mod alerts {
         target_labels: Vec<ClassificationLabel>,
     }
 
+    #[deprecated(since = "2.8.0", note = "use `MatcherFactory::build_from_extra_match` with `ExtraMatchConfig` instead")]
     #[derive(Debug, Clone)]
     pub struct AlertMatcher {
         compiled: Vec<CompiledAlertRule>,
@@ -102,6 +110,7 @@ pub mod alerts {
         regex: regex::Regex,
     }
 
+    #[allow(deprecated)]
     impl AlertMatcher {
         pub fn load_json_file<P: AsRef<Path>>(path: P) -> Result<Self, VecEyesError> {
             let content = std::fs::read_to_string(path)?;
@@ -111,7 +120,6 @@ pub mod alerts {
                 let regex = RegexBuilder::new(&rule.match_rule)
                     .size_limit(10_000_000)
                     .dfa_size_limit(2_000_000)
-                    // .unicode(false)
                     .build()?;
                 compiled.push(CompiledAlertRule {
                     title: rule.title,
@@ -160,12 +168,14 @@ pub struct EngineReport {
     pub classifications: Vec<(ClassificationLabel, f32)>,
 }
 
+#[deprecated(since = "2.8.0", note = "use `ClassifierFactory::builder()` with `ScoringEngine::matchers_from_rules_file` instead")]
 pub struct EngineBuilder {
     model: Option<Box<dyn Classifier>>,
     alerts: Option<alerts::AlertMatcher>,
     output: Option<OutputWriters>,
 }
 
+#[allow(deprecated)]
 impl Builder<Engine> for EngineBuilder {
     fn new() -> Self {
         Self {
@@ -184,6 +194,7 @@ impl Builder<Engine> for EngineBuilder {
     }
 }
 
+#[allow(deprecated)]
 impl EngineBuilder {
     pub fn new() -> Self { <Self as Builder<Engine>>::new() }
     pub fn build(self) -> Result<Engine, VecEyesError> { <Self as Builder<Engine>>::build(self) }
@@ -204,12 +215,14 @@ impl EngineBuilder {
     }
 }
 
+#[deprecated(since = "2.8.0", note = "use the `Classifier` trait directly via `ClassifierFactory::builder()`")]
 pub struct Engine {
     model: Box<dyn Classifier>,
     alerts: Option<alerts::AlertMatcher>,
     output: OutputWriters,
 }
 
+#[allow(deprecated)]
 impl Engine {
     pub fn classify_text(&self, text: &str, _source: &str) -> Result<EngineReport, VecEyesError> {
         let mut labels = self.model.classify_text(text, ScoreSumMode::Off, &[]).labels;

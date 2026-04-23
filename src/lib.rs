@@ -43,10 +43,12 @@ pub mod dataset;
 pub mod error;
 pub mod labels;
 pub mod matcher;
+pub mod metrics;
 pub mod nlp;
 pub mod report;
 pub mod security;
 pub(crate) mod parallel;
+pub(crate) mod math;
 
 pub use classifier::{
     BayesBuilder, ClassificationResult, Classifier, ClassifierBuilder, ClassifierFactory, ClassifierMethod,
@@ -70,7 +72,10 @@ pub use matcher::{
 pub use nlp::{FastTextConfig, FastTextConfigBuilder, NlpOption};
 pub use report::{ClassificationReport, ClassificationRecord};
 
+pub use dataset::read_text_file_limited;
+
+#[allow(deprecated)]
 pub use compat::{alerts, EngineBuilder, NlpPipeline, NlpPipelineBuilder, OutputWriters, RepresentationKind};
-pub use factory::TypedClassifierBuilder;
+pub use factory::{TypedClassifierBuilder, ClassifierSpec, BayesSpec, KnnSpec, AdvancedSpec};
 
 pub use builders::Builder;

@@ -1,4 +1,5 @@
 use crate::classifier::{ClassificationResult, Classifier};
+use ndarray;
 use crate::config::ScoreSumMode;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
@@ -29,7 +30,7 @@ pub enum SvmKernel {
     Sigmoid,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LogisticRegressionConfig {
     pub learning_rate: f32,
     pub epochs: usize,
@@ -85,7 +86,7 @@ impl RandomForestMaxFeatures {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RandomForestConfig {
     pub mode: RandomForestMode,
     pub n_trees: usize,
@@ -114,7 +115,7 @@ impl Default for RandomForestConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SvmConfig {
     pub kernel: SvmKernel,
     pub c: f32,
@@ -139,7 +140,7 @@ impl Default for SvmConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GradientBoostingConfig {
     pub n_estimators: usize,
     pub learning_rate: f32,
@@ -152,7 +153,7 @@ impl Default for GradientBoostingConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IsolationForestConfig {
     pub n_trees: usize,
     pub contamination: f32,
@@ -165,7 +166,7 @@ impl Default for IsolationForestConfig {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct AdvancedModelConfig {
     pub threads: Option<usize>,
     pub embedding_dimensions: Option<usize>,
@@ -191,7 +192,7 @@ pub enum AdvancedMethod {
 /// corpus so inference never has to refit TF-IDF on a single probe document
 /// (which would make every IDF weight degenerate and lose all discriminative
 /// power from the training distribution).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum FeaturePipeline {
     Count(TfIdfModel),
     TfIdf(TfIdfModel),
@@ -201,7 +202,7 @@ enum FeaturePipeline {
 
 impl FeaturePipeline {
     fn fit(samples: &[TrainingSample], nlp: NlpOption, dims: usize) -> Result<(Self, DenseMatrix), VecEyesError> {
-        let texts: Vec<String> = samples.iter().map(|s| s.text.clone()).collect();
+        let texts: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
         match nlp {
             NlpOption::Count => {
                 let model = fit_tfidf(&texts);
@@ -230,24 +231,28 @@ impl FeaturePipeline {
     }
 
     fn transform_text(&self, text: &str) -> DenseMatrix {
-        let texts = vec![text.to_string()];
+        let texts = [text];
+        self.transform_batch(&texts)
+    }
+
+    fn transform_batch<S: AsRef<str>>(&self, texts: &[S]) -> DenseMatrix {
         match self {
-            Self::Count(model)  => transform_count(model, &texts),
-            Self::TfIdf(model)  => crate::nlp::transform_tfidf(model, &texts),
+            Self::Count(model)  => transform_count(model, texts),
+            Self::TfIdf(model)  => crate::nlp::transform_tfidf(model, texts),
             // Use the stored training IDF — never refit on the probe document.
-            Self::Word2Vec { model, idf } => dense_matrix_from_texts_with_tfidf(model, &texts, Some(idf)),
-            Self::FastText { model, idf } => dense_matrix_from_texts_with_tfidf(model, &texts, Some(idf)),
+            Self::Word2Vec { model, idf } => dense_matrix_from_texts_with_tfidf(model, texts, Some(idf)),
+            Self::FastText { model, idf } => dense_matrix_from_texts_with_tfidf(model, texts, Some(idf)),
         }
     }
 }
 
-fn transform_count(model: &TfIdfModel, texts: &[String]) -> DenseMatrix {
+fn transform_count<S: AsRef<str>>(model: &TfIdfModel, texts: &[S]) -> DenseMatrix {
     let rows = texts.len();
     let cols = model.vocab.len();
     let mut matrix = ndarray::Array2::<f32>::zeros((rows, cols));
 
     for row in 0..texts.len() {
-        let normalized = normalize_text(&texts[row]);
+        let normalized = normalize_text(texts[row].as_ref());
         let tokens = tokenize(&normalized);
         for token in tokens {
             if let Some(index) = model.token_to_index.get(&token) {
@@ -274,7 +279,7 @@ fn l2_normalize_row(matrix: &mut DenseMatrix, row: usize) {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct LabelEncoder {
     pub(crate) labels: Vec<ClassificationLabel>,
     to_idx: HashMap<ClassificationLabel, usize>,
@@ -284,6 +289,7 @@ impl LabelEncoder {
     pub(crate) fn fit(samples: &[TrainingSample]) -> Self {
         let mut labels: Vec<ClassificationLabel> = samples.iter().map(|s| s.label.clone()).collect();
         labels.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        // sort must precede dedup — dedup only removes consecutive duplicates
         labels.dedup();
         let mut to_idx = HashMap::new();
         for (idx, label) in labels.iter().enumerate() {
@@ -307,7 +313,7 @@ impl LabelEncoder {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum AdvancedInner {
     Logistic(LogisticOVR),
     RandomForest(RandomForestModel),
@@ -316,7 +322,7 @@ enum AdvancedInner {
     IsolationForest(IsolationForestModel),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AdvancedClassifier {
     pipeline: FeaturePipeline,
     inner: AdvancedInner,
@@ -407,13 +413,32 @@ impl AdvancedClassifier {
 
     fn base_scores(&self, text: &str) -> Vec<(ClassificationLabel, f32)> {
         let probe = self.pipeline.transform_text(text);
+        self.score_probe(&probe)
+    }
+
+    fn score_probe(&self, probe: &DenseMatrix) -> Vec<(ClassificationLabel, f32)> {
         match &self.inner {
-            AdvancedInner::Logistic(model) => model.predict_scores(&probe),
-            AdvancedInner::RandomForest(model) => model.predict_scores(&probe),
-            AdvancedInner::Svm(model) => model.predict_scores(&probe),
-            AdvancedInner::GradientBoosting(model) => model.predict_scores(&probe),
-            AdvancedInner::IsolationForest(model) => model.predict_scores(&probe),
+            AdvancedInner::Logistic(model) => model.predict_scores(probe),
+            AdvancedInner::RandomForest(model) => model.predict_scores(probe),
+            AdvancedInner::Svm(model) => model.predict_scores(probe),
+            AdvancedInner::GradientBoosting(model) => model.predict_scores(probe),
+            AdvancedInner::IsolationForest(model) => model.predict_scores(probe),
         }
+    }
+
+    /// Persist the trained model to a JSON file.
+    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
+        let json = serde_json::to_string(self)
+            .map_err(|e| VecEyesError::invalid_config("AdvancedClassifier::save", e.to_string()))?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    /// Load a previously saved model from a JSON file.
+    pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
+        let json = std::fs::read_to_string(path)?;
+        serde_json::from_str(&json)
+            .map_err(|e| VecEyesError::invalid_config("AdvancedClassifier::load", e.to_string()))
     }
 }
 
@@ -425,20 +450,44 @@ impl Classifier for AdvancedClassifier {
         matchers: &[Box<dyn RuleMatcher>],
     ) -> ClassificationResult {
         let mut labels = self.base_scores(text);
-        // Only compute rule boost if it will be used; hits are still collected for telemetry
-        let (boost, hits) = if score_sum_mode.is_on() {
-            ScoringEngine::compute_rule_boost(text, matchers)
-        } else {
-            // Skip expensive boost computation when not needed, but still collect hits
-            let hits = ScoringEngine::find_matches_only(text, matchers);
-            (0.0, hits)
-        };
-        if score_sum_mode.is_on() {
+        let hits = if score_sum_mode.is_on() {
+            let (boost, hits) = ScoringEngine::compute_rule_boost(text, matchers);
             for (_, score) in &mut labels {
                 *score = ScoringEngine::merge_scores(*score, boost, score_sum_mode);
             }
-        }
+            hits
+        } else {
+            matchers.iter().flat_map(|m| m.find_matches(text)).collect()
+        };
         labels.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         ClassificationResult { labels, extra_hits: hits }
+    }
+
+    fn classify_batch(
+        &self,
+        texts: &[&str],
+        score_sum_mode: ScoreSumMode,
+        matchers: &[Box<dyn RuleMatcher>],
+    ) -> Vec<ClassificationResult> {
+        use rayon::prelude::*;
+        if texts.is_empty() { return Vec::new(); }
+        // Transform entire batch to matrix in one NLP pipeline call — the main
+        // speedup: token lookup + IDF weighting happens once for all N texts.
+        let batch_matrix = self.pipeline.transform_batch(texts);
+        texts.par_iter().enumerate().map(|(i, &text)| {
+            let single = batch_matrix.slice(ndarray::s![i..i+1, ..]).to_owned();
+            let mut labels = self.score_probe(&single);
+            let hits = if score_sum_mode.is_on() {
+                let (boost, hits) = ScoringEngine::compute_rule_boost(text, matchers);
+                for (_, score) in &mut labels {
+                    *score = ScoringEngine::merge_scores(*score, boost, score_sum_mode);
+                }
+                hits
+            } else {
+                matchers.iter().flat_map(|m| m.find_matches(text)).collect()
+            };
+            labels.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            ClassificationResult { labels, extra_hits: hits }
+        }).collect()
     }
 }

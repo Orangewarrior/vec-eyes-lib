@@ -3,7 +3,7 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 use crate::advanced_models::{LabelEncoder, SvmConfig, SvmKernel};
-use crate::classifier::softmax_scores;
+use crate::math::softmax_scores;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
@@ -15,7 +15,7 @@ const MAX_LANDMARKS: usize = 128;
 
 // ── Kernel map ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum KernelMap {
     Identity,
     /// RBF via Random Fourier Features (Rahimi & Recht 2007).
@@ -117,7 +117,7 @@ fn explicit_kernel(lhs: &[f32], rhs: &[f32], config: &SvmConfig) -> f32 {
 
 // ── LinearSvmOVR ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct LinearSvmOVR {
     weights: Array2<f32>,
     bias: Array1<f32>,

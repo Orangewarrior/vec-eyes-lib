@@ -70,7 +70,7 @@ pub enum BayesFeature {
     TfIdf(TfIdfModel),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BayesClassifier {
     nlp: NlpOption,
     threads: Option<usize>,
@@ -112,6 +112,21 @@ impl BayesClassifier {
         core::train(samples, nlp, threads)
     }
 
+    /// Persist the trained model to a JSON file.
+    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
+        let json = serde_json::to_string(self)
+            .map_err(|e| VecEyesError::invalid_config("BayesClassifier::save", e.to_string()))?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    /// Load a previously saved model from a JSON file.
+    pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
+        let json = std::fs::read_to_string(path)?;
+        serde_json::from_str(&json)
+            .map_err(|e| VecEyesError::invalid_config("BayesClassifier::load", e.to_string()))
+    }
+
     fn base_scores(&self, text: &str) -> Vec<(ClassificationLabel, f32)> {
         core::base_scores(self, text)
     }
@@ -125,12 +140,15 @@ impl Classifier for BayesClassifier {
         matchers: &[Box<dyn RuleMatcher>],
     ) -> ClassificationResult {
         let mut labels = self.base_scores(text);
-        let (boost, hits) = ScoringEngine::compute_rule_boost(text, matchers);
-        if score_sum_mode.is_on() {
+        let hits = if score_sum_mode.is_on() {
+            let (boost, hits) = ScoringEngine::compute_rule_boost(text, matchers);
             for (_, score) in &mut labels {
                 *score = ScoringEngine::merge_scores(*score, boost, score_sum_mode);
             }
-        }
+            hits
+        } else {
+            matchers.iter().flat_map(|m| m.find_matches(text)).collect()
+        };
         labels.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         ClassificationResult { labels, extra_hits: hits }
     }

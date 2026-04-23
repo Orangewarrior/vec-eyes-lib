@@ -4,6 +4,7 @@
 //! choose a method, configure NLP, load datasets, and build a classifier.
 
 pub mod typed;
+pub mod spec;
 
 pub use crate::classifier::{
     BayesBuilder, ClassifierBuilder, ClassifierFactory, ClassifierMethod, DistanceMetric,
@@ -19,3 +20,4 @@ pub fn builder_from_rules(rules: &RulesFile) -> ClassifierBuilder {
 }
 
 pub use typed::TypedClassifierBuilder;
+pub use spec::{AdvancedSpec, BayesSpec, ClassifierSpec, KnnSpec};

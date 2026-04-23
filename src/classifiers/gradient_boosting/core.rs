@@ -1,14 +1,14 @@
 use rayon::prelude::*;
 
 use crate::advanced_models::LabelEncoder;
-use crate::classifier::softmax_scores;
+use crate::math::softmax_scores;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::nlp::DenseMatrix;
 use crate::parallel::install_pool;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct RegStump {
     feature: usize,
     threshold: f32,
@@ -84,7 +84,7 @@ fn fit_regression_stump(x: &DenseMatrix, residual: &[f32]) -> RegStump {
     best
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct BinaryGradientBoosting {
     stumps: Vec<RegStump>,
     base_score: f32,
@@ -127,7 +127,7 @@ impl BinaryGradientBoosting {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct GradientBoostingModel {
     encoder: LabelEncoder,
     models: Vec<BinaryGradientBoosting>,

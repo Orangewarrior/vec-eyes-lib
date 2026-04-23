@@ -5,7 +5,7 @@ use crate::advanced_models::{
 };
 use crate::builders::Builder;
 use crate::config::{RulesFile, ScoreSumMode};
-use crate::dataset::{load_training_samples, read_text_file};
+use crate::dataset::{load_training_samples, read_text_file_limited};
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::matcher::{AlertHit, RuleMatcher, ScoringEngine};
@@ -80,7 +80,14 @@ pub struct EnsembleClassifier {
 }
 
 impl EnsembleClassifier {
-    pub fn new(members: Vec<(Box<dyn Classifier>, f32)>) -> Self { Self { members } }
+    /// Build an ensemble.  Weights are normalised to sum to 1.0 automatically
+    /// so callers can supply raw relative weights (e.g. `0.7` / `0.3`) or
+    /// probabilities — the result is the same.
+    pub fn new(members: Vec<(Box<dyn Classifier>, f32)>) -> Self {
+        let total: f32 = members.iter().map(|(_, w)| w.abs()).sum::<f32>().max(1e-9);
+        let members = members.into_iter().map(|(c, w)| (c, w / total)).collect();
+        Self { members }
+    }
 }
 
 impl Classifier for EnsembleClassifier {
@@ -90,14 +97,18 @@ impl Classifier for EnsembleClassifier {
         let mut hits = Vec::new();
         for (classifier, weight) in &self.members {
             let result = classifier.classify_text(text, score_sum_mode, matchers);
+            // Sum weighted log-probs: each member already emits calibrated
+            // probabilities via softmax; taking their ln converts back to
+            // log-space before combining, which is mathematically correct for
+            // a product-of-experts ensemble.
             for (label, score) in result.labels {
-                *acc.entry(label).or_insert(0.0) += score * *weight;
+                *acc.entry(label).or_insert(0.0) += weight * score.max(1e-9).ln();
             }
             hits.extend(result.extra_hits);
         }
         let mut labels: Vec<(ClassificationLabel, f32)> = acc.into_iter().collect();
         labels.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let labels = softmax_scores(&labels);
+        let labels = crate::math::softmax_scores(&labels);
         ClassificationResult { labels, extra_hits: hits }
     }
 }
@@ -109,6 +120,22 @@ pub trait Classifier {
         score_sum_mode: ScoreSumMode,
         matchers: &[Box<dyn RuleMatcher>],
     ) -> ClassificationResult;
+
+    /// Classify a batch of texts.
+    ///
+    /// The default implementation is sequential. Concrete types that are
+    /// `Send + Sync` (e.g. [`AdvancedClassifier`]) override this to amortise
+    /// the NLP pipeline and parallelize with rayon.
+    fn classify_batch(
+        &self,
+        texts: &[&str],
+        score_sum_mode: ScoreSumMode,
+        matchers: &[Box<dyn RuleMatcher>],
+    ) -> Vec<ClassificationResult> {
+        texts.iter()
+            .map(|t| self.classify_text(t, score_sum_mode, matchers))
+            .collect()
+    }
 }
 
 pub struct ClassifierFactory;
@@ -131,6 +158,8 @@ pub struct ClassifierBuilder {
     k: Option<usize>,
     p: Option<f32>,
     advanced: AdvancedModelConfig,
+    /// Pre-loaded samples that bypass hot_path / cold_path file loading.
+    preloaded_samples: Option<Vec<crate::dataset::TrainingSample>>,
 }
 
 impl Builder<Box<dyn Classifier>> for ClassifierBuilder {
@@ -147,19 +176,25 @@ impl Builder<Box<dyn Classifier>> for ClassifierBuilder {
             k: None,
             p: None,
             advanced: AdvancedModelConfig::default(),
+            preloaded_samples: None,
         }
     }
 
     fn build(self) -> Result<Box<dyn Classifier>, VecEyesError> {
         let method = self.method.ok_or_else(|| VecEyesError::invalid_config("classifier::ClassifierBuilder::build", "missing method; call .method(...) before .build()"))?;
         let nlp = self.nlp.ok_or_else(|| VecEyesError::invalid_config("classifier::ClassifierBuilder::build", "missing nlp option; call .nlp(...) before .build()"))?;
-        let hot_label = self.hot_label.ok_or_else(|| VecEyesError::invalid_config("classifier::ClassifierBuilder::build", "missing hot label; call .hot_label(...) before .build()"))?;
+        let hot_label = self.hot_label.clone().unwrap_or(ClassificationLabel::WebAttack);
         let cold_label = self.cold_label.clone().unwrap_or(ClassificationLabel::RawData);
-        let hot_path = self.hot_path.ok_or_else(|| VecEyesError::invalid_config("classifier::ClassifierBuilder::build", "missing hot training path; call .hot_path(...) before .build()"))?;
-        let cold_path = self.cold_path.ok_or_else(|| VecEyesError::invalid_config("classifier::ClassifierBuilder::build", "missing cold training path; call .cold_path(...) before .build()"))?;
 
-        let mut samples = load_training_samples(&hot_path, hot_label.clone(), self.recursive)?;
-        samples.extend(load_training_samples(&cold_path, cold_label.clone(), self.recursive)?);
+        let samples = if let Some(preloaded) = self.preloaded_samples {
+            preloaded
+        } else {
+            let hot_path = self.hot_path.ok_or_else(|| VecEyesError::invalid_config("classifier::ClassifierBuilder::build", "missing hot training path; call .hot_path(...) or .samples(...) before .build()"))?;
+            let cold_path = self.cold_path.ok_or_else(|| VecEyesError::invalid_config("classifier::ClassifierBuilder::build", "missing cold training path; call .cold_path(...) or .samples(...) before .build()"))?;
+            let mut s = load_training_samples(&hot_path, hot_label.clone(), self.recursive)?;
+            s.extend(load_training_samples(&cold_path, cold_label.clone(), self.recursive)?);
+            s
+        };
 
         match method {
             ClassifierMethod::Bayes => Ok(Box::new(BayesBuilder::new().nlp(nlp).samples(samples).threads(self.threads).build()?)),
@@ -240,6 +275,16 @@ impl Builder<Box<dyn Classifier>> for ClassifierBuilder {
 }
 
 impl ClassifierBuilder {
+
+pub fn new() -> Self {
+    <Self as Builder<Box<dyn Classifier>>>::new()
+}
+
+pub fn build(self) -> Result<Box<dyn Classifier>, VecEyesError> {
+    <Self as Builder<Box<dyn Classifier>>>::build(self)
+}
+
+
     pub fn method(mut self, method: ClassifierMethod) -> Self {
         self.method = Some(method);
         self
@@ -289,6 +334,15 @@ impl ClassifierBuilder {
         self.advanced = advanced;
         self
     }
+
+/// Supply pre-loaded training samples directly, bypassing `hot_path` / `cold_path`.
+///
+/// When this is set, `hot_path` and `cold_path` are ignored.  `hot_label` and
+/// `cold_label` still contribute as defaults when samples have no override.
+pub fn samples(mut self, samples: Vec<crate::dataset::TrainingSample>) -> Self {
+    self.preloaded_samples = Some(samples);
+    self
+}
 
     pub fn k(mut self, k: usize) -> Self {
         self.k = Some(k);
@@ -454,9 +508,10 @@ pub fn run_rules_pipeline(
     let matchers = ScoringEngine::matchers_from_rules_file(rules)?;
     let mut report = crate::report::ClassificationReport::new(rules.report_name.clone().unwrap_or_else(|| "Vec-Eyes Report".to_string()));
 
+    let max_file_bytes = rules.max_file_bytes.unwrap_or(crate::dataset::DEFAULT_MAX_FILE_BYTES);
     let files = crate::dataset::collect_files_recursively(classify_objects, rules.recursive_way.is_on())?;
     for file in files {
-        let text = read_text_file(&file)?;
+        let text = read_text_file_limited(&file, max_file_bytes)?;
         let result = classifier.classify_text(&text, rules.score_sum, &matchers);
         let labels: Vec<String> = result.labels.iter().map(|(l, s)| format!("{}:{:.2}", l, s)).collect();
         let top_score = result.labels.first().map(|x| x.1).unwrap_or(0.0);
@@ -472,27 +527,4 @@ pub fn run_rules_pipeline(
     }
 
     Ok(report)
-}
-
-pub(crate) fn softmax_scores(input: &[(ClassificationLabel, f32)]) -> Vec<(ClassificationLabel, f32)> {
-    if input.is_empty() {
-        return Vec::new();
-    }
-
-    let max_score = input.iter().map(|(_, score)| *score).fold(f32::NEG_INFINITY, f32::max);
-
-    let mut sum = 0.0f32;
-    let mut exp_values = Vec::with_capacity(input.len());
-    for (label, score) in input {
-        let value = (*score - max_score).exp();
-        sum += value;
-        exp_values.push((label.clone(), value));
-    }
-
-    if sum <= 0.0 {
-        return exp_values.into_iter().map(|(label, _)| (label, 0.0)).collect();
-    }
-
-    let inv_sum = 1.0 / sum;
-    exp_values.into_iter().map(|(label, value)| (label, value * inv_sum)).collect()
 }

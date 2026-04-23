@@ -7,6 +7,146 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.0] — Release Notes
+
+### Added
+
+#### 3.1 `Classifier::classify_batch` — batch inference API
+**Files:** `src/classifier.rs`, `src/advanced_models.rs`
+
+Added `classify_batch(&self, texts: &[&str], ...) -> Vec<ClassificationResult>` to
+the `Classifier` trait with a sequential default implementation. `AdvancedClassifier`
+overrides it with a two-stage approach: transform the entire batch through the NLP
+pipeline once (amortising embedding/TF-IDF cost), then score each row in parallel
+via rayon, slicing the batch matrix with `ndarray::s!` to avoid copies.
+
+#### 3.2 Model serialization — `save` / `load`
+**Files:** `src/classifiers/bayes/mod.rs`, `src/classifiers/knn/mod.rs`, `src/advanced_models.rs`, `src/nlp/feature_extractor.rs`, and all inner model structs
+
+`serde::Serialize` / `serde::Deserialize` added to every internal type:
+`TfIdfModel`, `WordEmbeddingModel`, `DistanceMetric`, `DenseFeatureModel`,
+`FeaturePipeline`, `LabelEncoder`, `AdvancedInner`, and all six config structs
+(`LogisticRegressionConfig`, `RandomForestConfig`, `SvmConfig`,
+`GradientBoostingConfig`, `IsolationForestConfig`, `AdvancedModelConfig`).
+
+All three public classifier types gain `save(path) -> Result<()>` and
+`load(path) -> Result<Self>` backed by `serde_json`.
+
+#### 3.3 `metrics` module
+**File:** `src/metrics.rs` (new)
+
+New public module exposed as `vec_eyes_lib::metrics` with:
+- `accuracy(y_true, y_pred) -> f32`
+- `precision(y_true, y_pred, label) -> f32`
+- `recall(y_true, y_pred, label) -> f32`
+- `f1(y_true, y_pred, label) -> f32`
+- `macro_f1(y_true, y_pred, labels) -> f32`
+- `weighted_f1(y_true, y_pred, labels) -> f32`
+- `roc_auc(y_true, y_scores) -> f32` — trapezoidal rule
+- `confusion_matrix(y_true, y_pred, labels) -> Vec<Vec<usize>>`
+- `classification_report(y_true, y_pred, labels) -> ClassificationReport` (returns `ClassMetrics` per class: precision, recall, f1, support)
+
+#### 3.4 `ClassifierBuilder::samples()` — preloaded training data
+**File:** `src/classifier.rs`
+
+Added `pub fn samples(mut self, samples: Vec<TrainingSample>) -> Self` to
+`ClassifierBuilder` as an alternative to `hot_path` / `cold_path`. When
+`samples()` is set, `build()` skips filesystem loading entirely. Enables
+in-memory pipelines, unit tests without fixture directories, and programmatic
+data augmentation.
+
+#### 3.8 `ClassifierSpec` typed factory
+**Files:** `src/factory/spec.rs` (new), `src/factory/mod.rs`
+
+`ClassifierSpec` eliminates the `MethodKind` enum + `require_*_config` defensive
+pattern. Each factory method returns a method-specific builder:
+
+```
+ClassifierSpec::bayes()                        -> BayesSpec
+ClassifierSpec::knn_cosine(k)                  -> KnnSpec
+ClassifierSpec::knn_euclidean(k)               -> KnnSpec
+ClassifierSpec::knn_manhattan(k)               -> KnnSpec
+ClassifierSpec::knn_minkowski(k, p)            -> KnnSpec
+ClassifierSpec::logistic_regression(cfg)       -> AdvancedSpec
+ClassifierSpec::random_forest(cfg)             -> AdvancedSpec
+ClassifierSpec::svm(cfg)                       -> AdvancedSpec
+ClassifierSpec::gradient_boosting(cfg)         -> AdvancedSpec
+ClassifierSpec::isolation_forest(cfg)          -> AdvancedSpec
+```
+
+Each spec builder exposes only the relevant knobs (`.nlp()`, `.threads()`,
+`.hot_label()`, `.cold_label()`, `.samples()`, `.training_data()`) and
+provides `.build()` / `.build_boxed()`.
+
+---
+
+### Fixed
+
+#### 2.8 Eliminate `Vec<String>` clones in NLP pipelines
+**Files:** `src/nlp/feature_extractor.rs`, `src/advanced_models.rs`, `src/classifiers/bayes/core.rs`, `src/classifiers/knn/core.rs`
+
+All text-processing functions now generic over `AsRef<str>`. Single-probe
+inference uses a zero-allocation `[text]` array instead of `vec![text.to_string()]`.
+
+#### 2.9 `LabelEncoder` sort/dedup invariant
+Added explicit comment above `labels.dedup()` clarifying that the preceding
+`sort()` is mandatory — `dedup` only collapses consecutive duplicates.
+
+#### 2.10 Lazy rule-boost computation
+**Files:** `src/advanced_models.rs`, `src/classifiers/bayes/mod.rs`, `src/classifiers/knn/mod.rs`
+
+`compute_rule_boost` is now skipped when `ScoreSumMode` is `Off`. Matcher hits
+are still collected via the lighter `find_matches` path.
+
+#### 2.11 Configurable per-file size limit
+**Files:** `src/dataset.rs`, `src/config.rs`, `src/classifier.rs`
+
+`MAX_TEXT_FILE_BYTES` renamed to `pub const DEFAULT_MAX_FILE_BYTES`. New
+`read_text_file_limited(path, max_bytes)` accepts a caller-supplied cap.
+`RulesFile` gains `max_file_bytes: Option<u64>`. Fixed
+`collect_files_recursively_with_limit` to honour the `max_bytes` parameter
+instead of always using the global constant.
+
+#### 2.12 Bounded global thread-pool cache
+**File:** `src/parallel.rs`
+
+`cached_pool` enforces `MAX_POOL_CACHE = 32` entries with FIFO eviction so
+the static `HashMap` cannot grow without bound across long-running processes.
+
+---
+
+### Changed
+
+#### 3.5 `EnsembleClassifier` — correct product-of-experts math
+**File:** `src/classifier.rs`
+
+- `new()` normalises weights to sum 1.0 automatically.
+- `classify_text` sums **weighted log-probabilities** (`weight * score.ln()`)
+  then applies a single softmax — a proper product-of-experts ensemble.
+
+#### 3.6 `softmax_scores` moved to private `math` module
+**Files:** `src/math.rs` (new), all internal consumers updated
+
+`softmax_scores` extracted into `pub(crate) mod math`. Public surface of
+`classifier.rs` is unchanged.
+
+#### 3.7 `compat.rs` types marked deprecated
+**File:** `src/compat.rs`
+
+All public types carry `#[deprecated(since = "2.8.0", note = "...")]`:
+- `RepresentationKind` → use `NlpOption`
+- `NlpPipeline` / `NlpPipelineBuilder` → use `ClassifierFactory::builder().nlp(...)`
+- `OutputWriters` → no longer needed
+- `alerts::AlertMatcher` → use `MatcherFactory::build_from_extra_match`
+- `EngineBuilder` / `Engine` → use `ClassifierFactory::builder()`
+
+---
+
+## Test plan
+
+- [x] `cargo build` — compilação limpa, sem erros
+- [x] `cargo test` — **35/35 testes** passam em todos os suites (`basic`, `advanced_models`, `architecture_api`, `helpers_and_ensemble`, `integration_vec_eyes`, `yaml_realistic`)
+
 ## [2.9.0] - 2026-04-22
 
 ### Fixed — Critical correctness bugs (5 issues)

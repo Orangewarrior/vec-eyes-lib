@@ -443,6 +443,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "rawpointer",
+ "serde",
 ]
 
 [[package]]
@@ -817,7 +818,7 @@ checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "vec-eyes-lib"
-version = "2.8.0"
+version = "2.9.0"
 dependencies = [
  "blas-src",
  "chrono",

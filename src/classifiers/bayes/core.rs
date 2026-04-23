@@ -1,7 +1,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::classifier::softmax_scores;
+use crate::math::softmax_scores;
 use crate::classifiers::bayes::BayesClassifier;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;

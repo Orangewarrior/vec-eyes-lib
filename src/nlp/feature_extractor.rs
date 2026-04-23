@@ -37,7 +37,7 @@ impl FastTextConfigBuilder {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TfIdfModel {
     pub vocab: Vec<String>,
     pub token_to_index: HashMap<String, usize>,
@@ -115,7 +115,7 @@ pub fn transform_tfidf<S: AsRef<str>>(model: &TfIdfModel, texts: &[S]) -> DenseM
     matrix
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WordEmbeddingModel {
     pub dims: usize,
     pub vectors: HashMap<String, Vec<f32>>,

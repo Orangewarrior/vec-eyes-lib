@@ -3,14 +3,14 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 use crate::advanced_models::LabelEncoder;
-use crate::classifier::softmax_scores;
+use crate::math::softmax_scores;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::nlp::DenseMatrix;
 use crate::parallel::install_pool;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct LogisticOVR {
     weights: Array2<f32>,
     bias: Array1<f32>,

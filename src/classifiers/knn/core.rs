@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::classifier::softmax_scores;
+use crate::math::softmax_scores;
 use crate::classifiers::knn::{manhattan_distance, minkowski_distance, DenseFeatureModel, DistanceMetric, KnnClassifier};
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;

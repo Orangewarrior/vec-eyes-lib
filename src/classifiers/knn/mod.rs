@@ -189,13 +189,13 @@ pub fn build(self) -> Result<KnnClassifier, VecEyesError> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DenseFeatureModel {
     Word2Vec(WordEmbeddingModel),
     FastText(WordEmbeddingModel),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct KnnClassifier {
     metric: DistanceMetric,
     threads: Option<usize>,
@@ -239,6 +239,21 @@ impl KnnClassifier {
         normalize_features: bool,
     ) -> Result<Self, VecEyesError> {
         core::train(samples, nlp, metric, dims, k, threads, normalize_features)
+    }
+
+    /// Persist the trained model to a JSON file.
+    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
+        let json = serde_json::to_string(self)
+            .map_err(|e| VecEyesError::invalid_config("KnnClassifier::save", e.to_string()))?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    /// Load a previously saved model from a JSON file.
+    pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
+        let json = std::fs::read_to_string(path)?;
+        serde_json::from_str(&json)
+            .map_err(|e| VecEyesError::invalid_config("KnnClassifier::load", e.to_string()))
     }
 
     pub(crate) fn matrix_for_text(&self, text: &str) -> DenseMatrix {

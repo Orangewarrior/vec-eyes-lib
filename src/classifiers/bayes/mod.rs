@@ -70,7 +70,7 @@ pub enum BayesFeature {
     TfIdf(TfIdfModel),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BayesClassifier {
     nlp: NlpOption,
     threads: Option<usize>,
@@ -110,6 +110,21 @@ impl BayesClassifier {
 
     pub fn train(samples: &[TrainingSample], nlp: NlpOption, threads: Option<usize>) -> Result<Self, VecEyesError> {
         core::train(samples, nlp, threads)
+    }
+
+    /// Persist the trained model to a JSON file.
+    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
+        let json = serde_json::to_string(self)
+            .map_err(|e| VecEyesError::invalid_config("BayesClassifier::save", e.to_string()))?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    /// Load a previously saved model from a JSON file.
+    pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
+        let json = std::fs::read_to_string(path)?;
+        serde_json::from_str(&json)
+            .map_err(|e| VecEyesError::invalid_config("BayesClassifier::load", e.to_string()))
     }
 
     fn base_scores(&self, text: &str) -> Vec<(ClassificationLabel, f32)> {

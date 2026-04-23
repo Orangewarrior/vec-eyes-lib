@@ -4,14 +4,14 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 
 use crate::advanced_models::{LabelEncoder, RandomForestConfig, RandomForestMode};
-use crate::classifier::softmax_scores;
+use crate::math::softmax_scores;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::nlp::DenseMatrix;
 use crate::parallel::install_pool;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum TreeNode {
     Leaf(Box<[f32]>),
     Split { feature: usize, threshold: f32, left: Box<TreeNode>, right: Box<TreeNode> },
@@ -98,7 +98,7 @@ fn build_tree(x: &DenseMatrix, y: &[usize], rows: &[usize], num_classes: usize, 
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RandomForestModel {
     trees: Vec<TreeNode>,
     encoder: LabelEncoder,

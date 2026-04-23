@@ -7,7 +7,315 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.9.0] - 2026-04-22
+## [2.9.0] - 2026-04-23
+
+### Added
+
+#### 3.1 `Classifier::classify_batch` — batch inference API
+**Files:** `src/classifier.rs`, `src/advanced_models.rs`
+
+Added `classify_batch(&self, texts: &[&str], ...) -> Vec<ClassificationResult>` to
+the `Classifier` trait with a sequential default implementation. `AdvancedClassifier`
+overrides it with a two-stage approach: transform the entire batch through the NLP
+pipeline once (amortising embedding/TF-IDF cost), then score each row in parallel
+via rayon, slicing the batch matrix with `ndarray::s!` to avoid copies.
+
+#### 3.2 Model serialization — `save` / `load`
+**Files:** `src/classifiers/bayes/mod.rs`, `src/classifiers/knn/mod.rs`,
+`src/advanced_models.rs`, `src/nlp/feature_extractor.rs`, and all inner model structs
+
+`serde::Serialize` / `serde::Deserialize` added to every internal type:
+`TfIdfModel`, `WordEmbeddingModel`, `DistanceMetric`, `DenseFeatureModel`,
+`FeaturePipeline`, `LabelEncoder`, `AdvancedInner`, and all six config structs
+(`LogisticRegressionConfig`, `RandomForestConfig`, `SvmConfig`,
+`GradientBoostingConfig`, `IsolationForestConfig`, `AdvancedModelConfig`).
+
+All three public classifier types gain `save(path) -> Result<()>` and
+`load(path) -> Result<Self>` backed by `serde_json`.
+
+#### 3.3 `metrics` module
+**File:** `src/metrics.rs` (new)
+
+New public module exposed as `vec_eyes_lib::metrics` with:
+- `accuracy(y_true, y_pred) -> f32`
+- `precision(y_true, y_pred, label) -> f32`
+- `recall(y_true, y_pred, label) -> f32`
+- `f1(y_true, y_pred, label) -> f32`
+- `macro_f1(y_true, y_pred, labels) -> f32`
+- `weighted_f1(y_true, y_pred, labels) -> f32`
+- `roc_auc(y_true, y_scores) -> f32` — trapezoidal rule
+- `confusion_matrix(y_true, y_pred, labels) -> Vec<Vec<usize>>`
+- `classification_report(y_true, y_pred, labels) -> ClassificationReport`
+  (returns `ClassMetrics` per class: precision, recall, f1, support)
+
+#### 3.4 `ClassifierBuilder::samples()` — preloaded training data
+**File:** `src/classifier.rs`
+
+Added `pub fn samples(mut self, samples: Vec<TrainingSample>) -> Self` to
+`ClassifierBuilder` as an alternative to `hot_path` / `cold_path`. When
+`samples()` is set, `build()` skips filesystem loading entirely. This enables
+in-memory pipelines, unit tests without fixture directories, and programmatic
+data augmentation.
+
+#### 3.8 `ClassifierSpec` typed factory
+**Files:** `src/factory/spec.rs` (new), `src/factory/mod.rs`
+
+`ClassifierSpec` eliminates the `MethodKind` enum + `require_*_config` defensive
+pattern. Each factory method returns a method-specific builder:
+
+```rust
+ClassifierSpec::bayes() -> BayesSpec
+ClassifierSpec::knn_cosine(k) -> KnnSpec
+ClassifierSpec::knn_euclidean(k) -> KnnSpec
+ClassifierSpec::knn_manhattan(k) -> KnnSpec
+ClassifierSpec::knn_minkowski(k, p) -> KnnSpec
+ClassifierSpec::logistic_regression(cfg) -> AdvancedSpec
+ClassifierSpec::random_forest(cfg) -> AdvancedSpec
+ClassifierSpec::svm(cfg) -> AdvancedSpec
+ClassifierSpec::gradient_boosting(cfg) -> AdvancedSpec
+ClassifierSpec::isolation_forest(cfg) -> AdvancedSpec
+```
+
+Each spec builder exposes only the relevant knobs (`.nlp()`, `.threads()`,
+`.hot_label()`, `.cold_label()`, `.samples()`, `.training_data()`) and
+provides `.build()` / `.build_boxed()` returning the concrete type or
+`Box<dyn Classifier>`.
+
+### Fixed
+
+#### 2.8 Eliminate `Vec<String>` clones in NLP pipelines
+**Files:** `src/nlp/feature_extractor.rs`, `src/advanced_models.rs`,
+`src/classifiers/bayes/core.rs`, `src/classifiers/knn/core.rs`
+
+All text-processing functions (`fit_tfidf`, `transform_tfidf`,
+`dense_matrix_from_texts`, `train_word2vec`, `train_fasttext`,
+`train_context_embeddings`, `transform_count`) are now generic over
+`AsRef<str>`. Single-probe inference uses a zero-allocation `[text]` array
+instead of `vec![text.to_string()]`.
+
+#### 2.9 `LabelEncoder` sort/dedup invariant
+**File:** `src/classifiers/*/core.rs`
+
+Added explicit comment above `labels.dedup()` clarifying that the preceding
+`sort()` is mandatory — `dedup` only collapses consecutive duplicates.
+
+#### 2.10 Lazy rule-boost computation
+**Files:** `src/advanced_models.rs`, `src/classifiers/bayes/mod.rs`,
+`src/classifiers/knn/mod.rs`
+
+`compute_rule_boost` (and the per-label score merge loop) is now skipped when
+`ScoreSumMode` is `Off`. Matcher hits are still collected via the lighter
+direct `find_matches` path, preserving telemetry without paying the full
+scoring cost.
+
+#### 2.11 Configurable per-file size limit
+**Files:** `src/dataset.rs`, `src/config.rs`, `src/classifier.rs`
+
+`MAX_TEXT_FILE_BYTES` renamed to `pub const DEFAULT_MAX_FILE_BYTES`. New
+`read_text_file_limited(path, max_bytes)` accepts a caller-supplied cap.
+`RulesFile` gains an optional `max_file_bytes: Option<u64>` YAML field honoured
+by `run_rules_pipeline`. `collect_files_recursively_with_limit` now correctly
+passes the `max_bytes` parameter through all checks instead of always using the
+global constant.
+
+#### 2.12 Bounded global thread-pool cache
+**File:** `src/parallel.rs`
+
+`cached_pool` enforces `MAX_POOL_CACHE = 32` entries with FIFO eviction
+(using `.copied()` to avoid borrow-checker issues) so the static `HashMap`
+cannot grow without bound across long-running processes.
+
+### Changed
+
+#### 3.5 `EnsembleClassifier` — correct product-of-experts math
+**File:** `src/classifier.rs`
+
+- `new()` normalises weights to sum 1.0 so callers can supply raw relative
+  weights (e.g. `0.7 / 0.3`) without manual normalisation.
+- `classify_text` now sums **weighted log-probabilities** (`weight * score.max(1e-9).ln()`)
+  instead of weighted softmax-probabilities, then applies a single softmax at
+  the end. This implements a proper product-of-experts ensemble where each
+  member's vote is in log-space — mathematically consistent and more robust to
+  members with degenerate probability mass.
+
+#### 3.6 `softmax_scores` moved to private `math` module
+**Files:** `src/math.rs` (new), all internal consumers updated
+
+`softmax_scores` extracted from `classifier.rs` into `pub(crate) mod math`.
+Consumers import via `crate::math::softmax_scores`. The public surface area of
+`classifier.rs` is unchanged.
+
+#### 3.7 `compat.rs` types marked deprecated
+**File:** `src/compat.rs`
+
+All public types carry `#[deprecated(since = "2.8.0", note = "...")]` with
+explicit migration guidance:
+- `RepresentationKind` → use `NlpOption` from the `nlp` module
+- `NlpPipeline` / `NlpPipelineBuilder` → use `ClassifierFactory::builder().nlp(...)`
+- `OutputWriters` → no longer needed, remove from code
+- `alerts::AlertMatcher` → use `MatcherFactory::build_from_extra_match` with `ExtraMatchConfig`
+- `EngineBuilder` / `Engine` → use `ClassifierFactory::builder()` with `ScoringEngine`
+
+Internal `impl` blocks use `#[allow(deprecated)]` to suppress self-referential warnings.
+
+---
+
+## [Previous 2.9.0 entry — code quality fixes 2.1–2.7] - 2026-04-22
+
+### Fixed — Critical correctness bugs (5 issues)
+
+#### 2.1 remove_null_bytes: Remove null bytes instead of spaces
+**File:** `src/nlp/normalizer.rs`
+
+The `remove_null_bytes` function was incorrectly filtering space characters (`' '`)
+instead of null bytes (`'\0'`). This corrupted tokenization inside
+`decode_obfuscated_text`, silently removing all whitespace from processed text.
+
+**Fix:** Changed filter condition from `*c != ' '` to `*c != '\0'`.
+
+#### 2.2 decode_percent_encoding: Fix UTF-8 decoding
+**File:** `src/nlp/normalizer.rs`
+
+The percent-decoding function converted decoded bytes directly to `char` using
+`value as char`, which only works for ASCII. Multi-byte UTF-8 sequences like
+`%C3%A9` (é) were decoded as two invalid separate characters.
+
+**Fix:** 
+- Changed output buffer from `String` to `Vec<u8>`
+- Collect decoded bytes, then use `String::from_utf8_lossy()` at the end
+- Now correctly handles all UTF-8 sequences
+
+#### 2.3 flush_token: Preserve single-character tokens
+**File:** `src/nlp/tokenizer.rs`
+
+The tokenizer discarded all tokens with length < 2, silently removing critical
+single-character symbols. For security-focused analysis (syscall/HTTP/malware
+detection), tokens like `<`, `>`, `|`, and single digits are essential signals.
+
+**Fix:**
+- Removed `if current.len() >= 2` check
+- Now preserves all non-empty tokens
+- Added documentation explaining security rationale
+
+#### 2.4 ClassifierBuilder: Remove duplicate new/build methods
+**File:** `src/classifier.rs`
+
+`ClassifierBuilder` had both `impl Builder<...> trait` and a separate
+`impl ClassifierBuilder` block re-implementing `new()` and `build()`. This
+duplication was confusing and prone to implementation drift.
+
+**Fix:**
+- Removed redundant inherent impl methods
+- Kept only the trait implementation
+- All builder methods now consistently defined in one place
+
+#### 2.7 tokenizer: Remove duplicate lowercase conversion
+**File:** `src/nlp/tokenizer.rs`
+
+The tokenizer called `to_ascii_lowercase()` on each character even though
+`normalize_text` already applies Unicode lowercase. This was redundant and
+inconsistent (Unicode vs ASCII lowercase).
+
+**Fix:** Removed duplicate `to_ascii_lowercase()` call in tokenizer loop.
+
+### Performance Optimizations
+
+#### softmax_scores: Optimize probability normalization
+**File:** `src/classifier.rs`
+
+Multiple micro-optimizations to the softmax function used in classification:
+
+- Replaced manual max-finding loop with `fold(f32::NEG_INFINITY, f32::max)`
+- Pre-allocate result vector with `Vec::with_capacity(input.len())`
+- Replace division by sum with multiplication by inverse (`value * inv_sum`)
+- Simplified zero-sum edge case handling
+
+**Impact:** Reduced allocations, better SIMD utilization, faster computation
+for large label sets.
+
+### Changed
+
+- All bug fixes maintain backward API compatibility
+- Tokenization behavior change: single-char tokens now included (may increase
+  token count slightly but improves detection accuracy)
+
+---
+
+## [2.8.0] - 2026-04-22
+
+### Fixed — ML algorithmic correctness (10 issues)
+
+#### 1.1 Sublinear TF in TF-IDF pipeline (`nlp/feature_extractor.rs`)
+Raw term frequency divided by document length was replaced with the standard
+sublinear form `tf = 1 + ln(count)`, eliminating length bias and aligning with
+Salton & Buckley (1988).
+
+#### 1.2 IDF re-fitted at inference time (`advanced_models.rs`)
+`FeaturePipeline` variants `Word2Vec` and `FastText` now store the training
+`TfIdfModel` as a named field (`idf`). Inference always uses the stationary
+training IDF — the model no longer re-fits IDF on probe documents.
+
+#### 1.3 IsolationForest trained on hot-only samples (`advanced_models.rs`)
+The anomaly detector was previously fitted only on cold-label samples, preventing
+it from learning the full data distribution. It now trains on the complete corpus;
+contamination is derived automatically from the actual hot-label proportion
+(`clamp(0.001, 0.49)`).
+
+#### 1.4 Probe IDF used as NB weight (`classifiers/bayes/core.rs`)
+The TF-IDF variant of Naïve Bayes was weighting token log-likelihoods by the
+probe document's TF-IDF matrix rather than the corpus IDF. Fixed to use
+`tfidf.idf[idx]` — a stationary weight from the training fit, consistent with
+the IDF-weighted multinomial NB formulation.
+
+#### 1.5 Singularity in k-NN distance weighting (`classifiers/knn/core.rs`)
+Neighbor weight `1 / (d + 1e-6)`, clamped to 1000, was replaced with the
+Gaussian kernel `exp(-d)`. The new weight is smooth, bounded in `(0, 1]`,
+free of singularities, and valid for all supported distance metrics.
+
+#### 1.6 Mini-batch SGD without epoch shuffle (`classifiers/logistic_regression/core.rs`)
+Logistic regression batches always iterated samples in insertion order, biasing
+gradients toward early samples. Each epoch now shuffles indices with a
+per-class deterministic `StdRng` (seed `0xBAD_FEED ^ (class_id * large_prime)`),
+ensuring unbiased mini-batches and reproducible parallel training.
+
+#### 1.7 Incorrect Random Fourier Features for RBF SVM (`classifiers/svm/core.rs`)
+The frequency matrix was not sampled from the correct distribution N(0, √(2γ)).
+`KernelMap` enum introduced with three variants:
+- `Identity` — linear kernel (no transform)
+- `Rff` — RBF via Rahimi & Recht (2007): Box-Muller → N(0, √(2γ)), bias ~ U(0, 2π), scale √(2/D)
+- `Landmark` — polynomial/sigmoid via random landmark rows (shuffled, seeded)
+
+#### 1.8 Random threshold candidates in Gradient Boosting (`classifiers/gradient_boosting/core.rs`)
+Split thresholds were generated as random jitter over `[min, max]`, missing the
+optimal cut-points. Replaced with sorted quantile midpoints between adjacent
+unique feature values (≤ 32 per feature — equivalent to a 32-bin histogram).
+The implementation is now fully deterministic with no RNG dependency.
+
+#### 1.9 Skip-gram with single embedding matrix (`nlp/feature_extractor.rs`)
+Word2Vec Skip-gram used a single weight matrix for both center and context
+words, deviating from Mikolov et al. (2013). Rewritten with two separate
+matrices: `w_in` (deterministic hash initialization) and `w_out`
+(zero-initialized). Negative sampling uses real RNG with the unigram noise
+distribution P^0.75. Only `w_in` is returned as the final embedding.
+
+#### 1.10 Inconsistent probability scale (`classifier.rs`, `matcher/mod.rs`)
+`softmax_scores` was returning percentages `[0, 100]`; `merge_scores` received
+`rule_boost` in `[0, 100]` and summed it directly to base probabilities,
+producing scores > 1. Fixed:
+- `softmax_scores` now returns true probabilities `[0, 1]`
+- `score_percent` field computed as `top_score * 100.0` at report generation
+- `merge_scores` normalises boost: `rule_boost / 100.0` before addition
+
+### Added
+- `.gitignore` — excludes `/target` build artefacts
+- `Cargo.lock` — committed for reproducible builds
+
+---
+
+## [2.7.3] - (previous release)
+
+See git history for earlier changes.
+
 
 ### Fixed — Critical correctness bugs (5 issues)
 

@@ -284,6 +284,7 @@ pub fn build(self) -> Result<Box<dyn Classifier>, VecEyesError> {
     <Self as Builder<Box<dyn Classifier>>>::build(self)
 }
 
+
     pub fn method(mut self, method: ClassifierMethod) -> Self {
         self.method = Some(method);
         self
@@ -324,15 +325,15 @@ pub fn build(self) -> Result<Box<dyn Classifier>, VecEyesError> {
         self
     }
 
-pub fn embedding_dimensions(mut self, dimensions: usize) -> Self {
-    self.advanced.embedding_dimensions = Some(dimensions.max(1));
-    self
-}
+    pub fn embedding_dimensions(mut self, dimensions: usize) -> Self {
+        self.advanced.embedding_dimensions = Some(dimensions.max(1));
+        self
+    }
 
-pub fn advanced_config(mut self, advanced: AdvancedModelConfig) -> Self {
-    self.advanced = advanced;
-    self
-}
+    pub fn advanced_config(mut self, advanced: AdvancedModelConfig) -> Self {
+        self.advanced = advanced;
+        self
+    }
 
 /// Supply pre-loaded training samples directly, bypassing `hot_path` / `cold_path`.
 ///

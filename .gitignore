@@ -1,1 +1,14 @@
-/target
+# Build artifacts
+target/
+Cargo.lock
+
+# Dependencies
+node_modules/
+
+# Editors
+.vscode/
+
+# Environment
+.env
+.env.local
+*.env.*

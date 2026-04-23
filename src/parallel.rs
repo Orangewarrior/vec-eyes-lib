@@ -13,8 +13,8 @@ fn cached_pool(threads: usize) -> Option<Arc<ThreadPool>> {
         return Some(Arc::clone(pool));
     }
     if guard.len() >= MAX_POOL_CACHE {
-        if let Some(&evict_key) = guard.keys().next() {
-            guard.remove(&evict_key);
+        if let Some(first_key) = guard.keys().next().copied() {
+            guard.remove(&first_key);
         }
     }
     let pool = Arc::new(ThreadPoolBuilder::new().num_threads(threads).build().ok()?);

@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.0] - 2026-04-22
+
+### Fixed — Critical correctness bugs (5 issues)
+
+#### 2.1 remove_null_bytes: Remove null bytes instead of spaces
+**File:** `src/nlp/normalizer.rs`
+
+The `remove_null_bytes` function was incorrectly filtering space characters (`' '`)
+instead of null bytes (`'\0'`). This corrupted tokenization inside
+`decode_obfuscated_text`, silently removing all whitespace from processed text.
+
+**Fix:** Changed filter condition from `*c != ' '` to `*c != '\0'`.
+
+#### 2.2 decode_percent_encoding: Fix UTF-8 decoding
+**File:** `src/nlp/normalizer.rs`
+
+The percent-decoding function converted decoded bytes directly to `char` using
+`value as char`, which only works for ASCII. Multi-byte UTF-8 sequences like
+`%C3%A9` (é) were decoded as two invalid separate characters.
+
+**Fix:** 
+- Changed output buffer from `String` to `Vec<u8>`
+- Collect decoded bytes, then use `String::from_utf8_lossy()` at the end
+- Now correctly handles all UTF-8 sequences
+
+#### 2.3 flush_token: Preserve single-character tokens
+**File:** `src/nlp/tokenizer.rs`
+
+The tokenizer discarded all tokens with length < 2, silently removing critical
+single-character symbols. For security-focused analysis (syscall/HTTP/malware
+detection), tokens like `<`, `>`, `|`, and single digits are essential signals.
+
+**Fix:**
+- Removed `if current.len() >= 2` check
+- Now preserves all non-empty tokens
+- Added documentation explaining security rationale
+
+#### 2.4 ClassifierBuilder: Remove duplicate new/build methods
+**File:** `src/classifier.rs`
+
+`ClassifierBuilder` had both `impl Builder<...> trait` and a separate
+`impl ClassifierBuilder` block re-implementing `new()` and `build()`. This
+duplication was confusing and prone to implementation drift.
+
+**Fix:**
+- Removed redundant inherent impl methods
+- Kept only the trait implementation
+- All builder methods now consistently defined in one place
+
+#### 2.7 tokenizer: Remove duplicate lowercase conversion
+**File:** `src/nlp/tokenizer.rs`
+
+The tokenizer called `to_ascii_lowercase()` on each character even though
+`normalize_text` already applies Unicode lowercase. This was redundant and
+inconsistent (Unicode vs ASCII lowercase).
+
+**Fix:** Removed duplicate `to_ascii_lowercase()` call in tokenizer loop.
+
+### Performance Optimizations
+
+#### softmax_scores: Optimize probability normalization
+**File:** `src/classifier.rs`
+
+Multiple micro-optimizations to the softmax function used in classification:
+
+- Replaced manual max-finding loop with `fold(f32::NEG_INFINITY, f32::max)`
+- Pre-allocate result vector with `Vec::with_capacity(input.len())`
+- Replace division by sum with multiplication by inverse (`value * inv_sum`)
+- Simplified zero-sum edge case handling
+
+**Impact:** Reduced allocations, better SIMD utilization, faster computation
+for large label sets.
+
+### Changed
+
+- All bug fixes maintain backward API compatibility
+- Tokenization behavior change: single-char tokens now included (may increase
+  token count slightly but improves detection accuracy)
+
+---
+
 ## [2.8.0] - 2026-04-22
 
 ### Fixed — ML algorithmic correctness (10 issues)

@@ -186,13 +186,13 @@ pub fn dense_matrix_from_texts_with_tfidf<S: AsRef<str>>(
 ///
 /// `r.dot(&r)` is a BLAS sdot call when the `blas` feature is enabled;
 /// otherwise LLVM auto-vectorises the reduction.
+#[inline(always)]
 fn l2_normalize_row(matrix: &mut DenseMatrix, row: usize) {
-    let norm = {
-        let r = matrix.row(row);
-        r.dot(&r).sqrt()
-    };
+    let r = matrix.row(row);
+    let norm = r.dot(&r).sqrt();
     if norm > 1e-12 {
-        matrix.row_mut(row).mapv_inplace(|v| v / norm);
+        let inv_norm = 1.0 / norm;
+        matrix.row_mut(row).mapv_inplace(|v| v * inv_norm);
     }
 }
 

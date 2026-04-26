@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.0] - 2026-04-26
+
+### Added
+
+#### FastText `.bin` loader (`src/nlp/fasttext_bin.rs`)
+
+Pure-Rust parser for binary files produced by the external fastText CLI (format v12). No C library or FFI required. Reads the magic number, args struct (dims, minn, maxn, bucket), dictionary, quantization flag, and flat float32 input matrix.
+
+Key types:
+- `FastTextBin` — raw loader; holds word index + full matrix in memory
+- `FastTextEmbeddings` — extracted subset of vectors; serde-serializable for fast persistence
+
+Key methods:
+- `FastTextBin::load(path)` — parse a `.bin` file
+- `FastTextBin::extract_all()` — extract every word and bucket vector
+- `FastTextBin::extract_for_vocab(vocab)` — extract only vectors relevant to a given vocabulary (much smaller output)
+- `FastTextEmbeddings::vector_for(word)` — in-vocabulary lookup or subword OOV composition
+- `FastTextEmbeddings::save_bincode / load_bincode` — persist/reload extracted embeddings
+
+#### Subword OOV composition (FNV-1a hash)
+
+OOV words are represented by averaging the bucket vectors for all character n-grams in `[minn, maxn]`, matching fastText C++ exactly:
+- Boundary markers `<` / `>` added around the word before n-gram extraction
+- FNV-1a: `h ^= (b as i8 as i32 as u32)` (sign-extend byte) then `h.wrapping_mul(16777619)`
+- Standalone `<` and `>` n-grams are excluded (matches fastText's `computeSubwords`)
+
+#### `train_with_external_fasttext` on all classifiers
+
+Every classifier type gains a constructor that accepts pre-loaded `FastTextEmbeddings` instead of training its own embedding model:
+
+- `KnnClassifier::train_with_external_fasttext(samples, embeddings, metric, k, threads, normalize_features)`
+- `LogisticClassifier::train_with_external_fasttext(samples, embeddings, config, threads, dims)`
+- `SvmClassifier::train_with_external_fasttext(...)`
+- `RandomForestClassifier::train_with_external_fasttext(...)`
+- `GradientBoostingClassifier::train_with_external_fasttext(...)`
+- `IsolationForestClassifier::train_with_external_fasttext(samples, embeddings, config, hot_label, cold_label, threads)`
+
+#### Bincode persistence for all classifiers
+
+All public classifier types now support fast binary save/load via `bincode v1`:
+
+| Method pair | File count | Use case |
+|---|---|---|
+| `save_bincode / load_bincode` | 1 | Fast production reload |
+| `save_split_bincode / load_split_bincode` | 2 (`.nlp.bin` + `.ml.bin`) | Share NLP pipeline across multiple ML heads |
+
+Types with bincode support: `KnnClassifier`, `BayesClassifier`, `LogisticClassifier`, `SvmClassifier`, `RandomForestClassifier`, `GradientBoostingClassifier`, `IsolationForestClassifier`, `AdvancedClassifier`, `FastTextEmbeddings`.
+
+#### Standalone typed classifier wrappers
+
+Five new concrete `struct` types replacing the generic `AdvancedClassifier` wrapper. Each type wraps `AdvancedClassifier` internally but exposes a typed, method-specific API with the correct config type:
+
+- `LogisticClassifier` — `LogisticRegressionConfig`
+- `SvmClassifier` — `SvmConfig`
+- `RandomForestClassifier` — `RandomForestConfig`
+- `GradientBoostingClassifier` — `GradientBoostingConfig`
+- `IsolationForestClassifier` — `IsolationForestConfig` + explicit `hot_label` / `cold_label`
+
+All five implement the `Classifier` trait and are exported from the crate root.
+
+#### `VecEyesError::Serialization` variant
+
+New error variant for bincode encode/decode failures:
+```rust
+#[error("serialization error: {0}")]
+Serialization(String),
+```
+
+#### `docs/save-load.md` — persistence documentation
+
+Comprehensive guide covering:
+- Format comparison table (JSON vs bincode single vs bincode split)
+- Full working examples for every classifier type using the three UCI datasets
+- External FastText workflow (parse once → save embeddings → reload → train)
+- Error handling guide with `VecEyesError` match arms
+
+#### Save/load test suite (`tests/save_load.rs`)
+
+27 integration tests covering round-trip persistence for all classifier types across the three UCI datasets:
+- JSON save/load for `KnnClassifier` and `BayesClassifier`
+- Bincode single-file round-trips for all classifier types
+- Split bincode round-trips for `KnnClassifier`, `LogisticClassifier`, `SvmClassifier`, `RandomForestClassifier`, `GradientBoostingClassifier`, `IsolationForestClassifier`
+- `FastTextEmbeddings` bincode persistence
+- Verify classification result is identical before and after round-trip
+
+---
+
 ## [2.9.0] - 2026-04-23
 
 ### Added

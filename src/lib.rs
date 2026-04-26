@@ -51,8 +51,9 @@ pub(crate) mod parallel;
 pub(crate) mod math;
 
 pub use classifier::{
-    BayesBuilder, ClassificationResult, Classifier, ClassifierBuilder, ClassifierFactory, ClassifierMethod,
-    DistanceMetric, EnsembleClassifier, ExplainableClassifier, KnnBuilder, MethodKind, TokenContribution,
+    BayesBuilder, BayesClassifier, ClassificationResult, Classifier, ClassifierBuilder,
+    ClassifierFactory, ClassifierMethod, DistanceMetric, EnsembleClassifier,
+    ExplainableClassifier, KnnBuilder, KnnClassifier, MethodKind, TokenContribution,
 };
 pub use advanced_models::{
     AdvancedClassifier, AdvancedModelConfig, GradientBoostingConfig, IsolationForestConfig,

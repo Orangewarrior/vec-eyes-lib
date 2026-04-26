@@ -7,7 +7,7 @@ use crate::labels::ClassificationLabel;
 use crate::matcher::{RuleMatcher, ScoringEngine};
 use crate::nlp::{
     dense_matrix_from_texts_with_tfidf, fit_tfidf, normalize_text, tokenize, DenseMatrix,
-    FastTextConfigBuilder, NlpOption, TfIdfModel, WordEmbeddingModel,
+    FastTextConfigBuilder, FastTextEmbeddings, NlpOption, TfIdfModel, WordEmbeddingModel,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -198,6 +198,7 @@ enum FeaturePipeline {
     TfIdf(TfIdfModel),
     Word2Vec { model: WordEmbeddingModel, idf: TfIdfModel },
     FastText { model: WordEmbeddingModel, idf: TfIdfModel },
+    ExternalFastText { embeddings: FastTextEmbeddings, idf: TfIdfModel },
 }
 
 impl FeaturePipeline {
@@ -242,6 +243,9 @@ impl FeaturePipeline {
             // Use the stored training IDF — never refit on the probe document.
             Self::Word2Vec { model, idf } => dense_matrix_from_texts_with_tfidf(model, texts, Some(idf)),
             Self::FastText { model, idf } => dense_matrix_from_texts_with_tfidf(model, texts, Some(idf)),
+            Self::ExternalFastText { embeddings, idf } => {
+                crate::nlp::fasttext_bin::embed_texts(embeddings, texts, Some(idf))
+            }
         }
     }
 }
@@ -347,61 +351,16 @@ impl AdvancedClassifier {
         config: &AdvancedModelConfig,
     ) -> Result<Self, VecEyesError> {
         let dims = config.embedding_dimensions.unwrap_or(32).max(1);
-        match method {
-            AdvancedMethod::IsolationForest => {
-                if !matches!(nlp, NlpOption::Word2Vec | NlpOption::FastText) {
-                    return Err(VecEyesError::InvalidConfig(
-                        "IsolationForest currently requires Word2Vec or FastText embeddings".into(),
-                    ));
-                }
-                let params = config.isolation_forest.clone().unwrap_or_default();
-                // Train on the full dataset so the isolation tree sees the real data
-                // distribution.  Derive contamination from the observed hot fraction
-                // when ground-truth labels are available; fall back to the user value
-                // when all samples share the same label.
-                let hot_count = samples.iter().filter(|s| s.label == hot_label).count();
-                let contamination = if hot_count > 0 && hot_count < samples.len() {
-                    (hot_count as f32 / samples.len() as f32).clamp(0.001, 0.49)
-                } else {
-                    params.contamination
-                };
-                let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
-                let model = IsolationForestModel::fit(
-                    &matrix,
-                    hot_label,
-                    cold_label,
-                    params.n_trees,
-                    contamination,
-                    params.subsample_size,
-                    config.threads,
-                );
-                Ok(Self { pipeline, inner: AdvancedInner::IsolationForest(model) })
-            }
-            AdvancedMethod::LogisticRegression => {
-                let params = config.logistic.clone().unwrap_or_default();
-                let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
-                let model = LogisticOVR::fit(&matrix, samples, params.epochs, params.learning_rate, params.lambda, config.threads)?;
-                Ok(Self { pipeline, inner: AdvancedInner::Logistic(model) })
-            }
-            AdvancedMethod::Svm => {
-                let params = config.svm.clone().unwrap_or_default();
-                let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
-                let model = LinearSvmOVR::fit(&matrix, samples, &params, config.threads)?;
-                Ok(Self { pipeline, inner: AdvancedInner::Svm(model) })
-            }
-            AdvancedMethod::RandomForest => {
-                let params = config.random_forest.clone().unwrap_or_default();
-                let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
-                let model = RandomForestModel::fit(&matrix, samples, &params, config.threads)?;
-                Ok(Self { pipeline, inner: AdvancedInner::RandomForest(model) })
-            }
-            AdvancedMethod::GradientBoosting => {
-                let params = config.gradient_boosting.clone().unwrap_or_default();
-                let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
-                let model = GradientBoostingModel::fit(&matrix, samples, params.n_estimators, params.learning_rate, config.threads)?;
-                Ok(Self { pipeline, inner: AdvancedInner::GradientBoosting(model) })
-            }
+        if matches!(method, AdvancedMethod::IsolationForest)
+            && !matches!(nlp, NlpOption::Word2Vec | NlpOption::FastText)
+        {
+            return Err(VecEyesError::InvalidConfig(
+                "IsolationForest currently requires Word2Vec or FastText embeddings".into(),
+            ));
         }
+        let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
+        let inner = Self::fit_inner(method, &matrix, samples, hot_label, cold_label, config)?;
+        Ok(Self { pipeline, inner })
     }
 
     pub fn random_forest_oob_score(&self) -> Option<f32> {
@@ -439,6 +398,112 @@ impl AdvancedClassifier {
         let json = std::fs::read_to_string(path)?;
         serde_json::from_str(&json)
             .map_err(|e| VecEyesError::invalid_config("AdvancedClassifier::load", e.to_string()))
+    }
+
+    /// Train using external fastText embeddings instead of the internal NLP pipeline.
+    /// A TF-IDF model is fitted on the training corpus and stored with the embeddings.
+    pub fn train_with_external_fasttext(
+        method: AdvancedMethod,
+        samples: &[TrainingSample],
+        embeddings: FastTextEmbeddings,
+        hot_label: ClassificationLabel,
+        cold_label: ClassificationLabel,
+        config: &AdvancedModelConfig,
+    ) -> Result<Self, VecEyesError> {
+        let texts: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
+        let idf = fit_tfidf(&texts);
+        let pipeline = FeaturePipeline::ExternalFastText { embeddings, idf };
+        let matrix = pipeline.transform_batch(&texts);
+        let inner = Self::fit_inner(method, &matrix, samples, hot_label, cold_label, config)?;
+        Ok(Self { pipeline, inner })
+    }
+
+    fn fit_inner(
+        method: AdvancedMethod,
+        matrix: &DenseMatrix,
+        samples: &[TrainingSample],
+        hot_label: ClassificationLabel,
+        cold_label: ClassificationLabel,
+        config: &AdvancedModelConfig,
+    ) -> Result<AdvancedInner, VecEyesError> {
+        match method {
+            AdvancedMethod::IsolationForest => {
+                let params = config.isolation_forest.clone().unwrap_or_default();
+                let hot_count = samples.iter().filter(|s| s.label == hot_label).count();
+                let contamination = if hot_count > 0 && hot_count < samples.len() {
+                    (hot_count as f32 / samples.len() as f32).clamp(0.001, 0.49)
+                } else {
+                    params.contamination
+                };
+                let model = IsolationForestModel::fit(
+                    matrix, hot_label, cold_label, params.n_trees,
+                    contamination, params.subsample_size, config.threads,
+                );
+                Ok(AdvancedInner::IsolationForest(model))
+            }
+            AdvancedMethod::LogisticRegression => {
+                let params = config.logistic.clone().unwrap_or_default();
+                let model = LogisticOVR::fit(matrix, samples, params.epochs, params.learning_rate, params.lambda, config.threads)?;
+                Ok(AdvancedInner::Logistic(model))
+            }
+            AdvancedMethod::Svm => {
+                let params = config.svm.clone().unwrap_or_default();
+                let model = LinearSvmOVR::fit(matrix, samples, &params, config.threads)?;
+                Ok(AdvancedInner::Svm(model))
+            }
+            AdvancedMethod::RandomForest => {
+                let params = config.random_forest.clone().unwrap_or_default();
+                let model = RandomForestModel::fit(matrix, samples, &params, config.threads)?;
+                Ok(AdvancedInner::RandomForest(model))
+            }
+            AdvancedMethod::GradientBoosting => {
+                let params = config.gradient_boosting.clone().unwrap_or_default();
+                let model = GradientBoostingModel::fit(matrix, samples, params.n_estimators, params.learning_rate, config.threads)?;
+                Ok(AdvancedInner::GradientBoosting(model))
+            }
+        }
+    }
+
+    /// Save the entire model as a bincode file (fast, compact).
+    pub fn save_bincode<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
+        let bytes = bincode::serialize(self)
+            .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        std::fs::write(path, bytes)?;
+        Ok(())
+    }
+
+    /// Load a model from a bincode file.
+    pub fn load_bincode<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
+        let bytes = std::fs::read(path)?;
+        bincode::deserialize(&bytes)
+            .map_err(|e| VecEyesError::Serialization(e.to_string()))
+    }
+
+    /// Save NLP pipeline and ML weights to **separate** bincode files.
+    pub fn save_split_bincode<P: AsRef<std::path::Path>, Q: AsRef<std::path::Path>>(
+        &self,
+        nlp_path: P,
+        ml_path: Q,
+    ) -> Result<(), VecEyesError> {
+        let nlp_bytes = bincode::serialize(&self.pipeline)
+            .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        let ml_bytes = bincode::serialize(&self.inner)
+            .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        std::fs::write(nlp_path, nlp_bytes)?;
+        std::fs::write(ml_path, ml_bytes)?;
+        Ok(())
+    }
+
+    /// Load from two bincode files written by [`save_split_bincode`](AdvancedClassifier::save_split_bincode).
+    pub fn load_split_bincode<P: AsRef<std::path::Path>, Q: AsRef<std::path::Path>>(
+        nlp_path: P,
+        ml_path: Q,
+    ) -> Result<Self, VecEyesError> {
+        let pipeline: FeaturePipeline = bincode::deserialize(&std::fs::read(nlp_path)?)
+            .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        let inner: AdvancedInner = bincode::deserialize(&std::fs::read(ml_path)?)
+            .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        Ok(Self { pipeline, inner })
     }
 }
 

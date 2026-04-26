@@ -22,6 +22,9 @@ pub enum VecEyesError {
 
     #[error("unsupported operation: {0}")]
     Unsupported(String),
+
+    #[error("serialization error: {0}")]
+    Serialization(String),
 }
 
 impl VecEyesError {

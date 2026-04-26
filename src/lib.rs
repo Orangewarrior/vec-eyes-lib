@@ -70,6 +70,7 @@ pub use matcher::{
     RuleSet, ScoringEngine,
 };
 pub use nlp::{FastTextConfig, FastTextConfigBuilder, NlpOption};
+pub use nlp::fasttext_bin::{FastTextBin, FastTextEmbeddings};
 pub use report::{ClassificationReport, ClassificationRecord};
 
 pub use dataset::read_text_file_limited;

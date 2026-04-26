@@ -22,6 +22,25 @@ It provides:
 
 ---
 
+## 📚 Documentation
+
+| Guide | Description |
+|---|---|
+| [Real Classification Examples](docs/real_examples.md) | Three end-to-end projects (security, biology, finance) — download a UCI dataset, train a classifier, build and run |
+| [Save & Load — Model Persistence](docs/save-load.md) | JSON, bincode, and split-bincode formats; external fastText workflow with UCI dataset examples |
+
+### Quick links by topic
+
+- **Getting started with a real dataset** → [real_examples.md — Prerequisites](docs/real_examples.md#prerequisites)
+- **Security / spam detection** (KNN Euclidean + Word2Vec) → [Example 1](docs/real_examples.md#example-1--security-phishing--spam-detection)
+- **Biology / sequence classification** (Naive Bayes + TF-IDF) → [Example 2](docs/real_examples.md#example-2--biology-splice-junction-sequence-classification)
+- **Finance / sentiment** (Logistic Regression + Random Forest) → [Example 3](docs/real_examples.md#example-3--finance-sentiment-classification)
+- **Comparing all four classifiers side by side** → [Comparison snippet](docs/real_examples.md#comparing-all-four-classifiers-on-the-same-dataset)
+- **Persisting a trained model to disk** → [save-load.md](docs/save-load.md)
+- **Loading an external fastText `.bin` from the CLI tool** → [External fastText workflow](docs/save-load.md#external-fasttext-embeddings--end-to-end-workflow)
+
+---
+
 ## 🎯 Use Cases
 
 ### 🔐 Security & Threat Detection

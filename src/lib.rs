@@ -58,6 +58,9 @@ pub use advanced_models::{
     AdvancedClassifier, AdvancedModelConfig, GradientBoostingConfig, IsolationForestConfig,
     LogisticRegressionConfig, RandomForestConfig, RandomForestMaxFeatures, RandomForestMode,
     SvmConfig, SvmKernel,
+    // Standalone typed classifiers — same API as KnnClassifier / BayesClassifier
+    GradientBoostingClassifier, IsolationForestClassifier, LogisticClassifier,
+    RandomForestClassifier, SvmClassifier,
 };
 pub use config::{
     ExtraMatchConfig, ExtraMatchEngine, RecursiveMode, RulesFile, ScoreSumMode,

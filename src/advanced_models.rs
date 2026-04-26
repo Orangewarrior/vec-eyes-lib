@@ -556,3 +556,281 @@ impl Classifier for AdvancedClassifier {
         }).collect()
     }
 }
+
+// ── Standalone typed wrappers ─────────────────────────────────────────────────
+//
+// Each advanced method gets its own public struct so callers can work with a
+// concrete type (like `KnnClassifier` or `BayesClassifier`) instead of always
+// going through the generic `AdvancedClassifier` wrapper.
+//
+// All persistence methods mirror those on `KnnClassifier`:
+//   save / load          – JSON (human-readable)
+//   save_bincode /
+//   load_bincode         – fast bincode, single file
+//   save_split_bincode /
+//   load_split_bincode   – bincode, NLP pipeline + ML weights in separate files
+
+macro_rules! impl_advanced_classifier {
+    ($name:ident, $method:expr, $config_field:ident, $config_type:ty) => {
+        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+        pub struct $name(AdvancedClassifier);
+
+        impl $name {
+            /// Train using the internal NLP pipeline (Word2Vec / FastText / TF-IDF).
+            /// `embedding_dims` is only used for Word2Vec / FastText NLP options.
+            pub fn train(
+                samples: &[TrainingSample],
+                nlp: NlpOption,
+                config: $config_type,
+                threads: Option<usize>,
+                embedding_dims: usize,
+            ) -> Result<Self, VecEyesError> {
+                let mc = AdvancedModelConfig {
+                    $config_field: Some(config),
+                    threads,
+                    embedding_dimensions: Some(embedding_dims.max(1)),
+                    ..Default::default()
+                };
+                // hot_label / cold_label are unused by this method's inner fit()
+                AdvancedClassifier::train(
+                    $method,
+                    samples,
+                    nlp,
+                    ClassificationLabel::WebAttack,
+                    ClassificationLabel::RawData,
+                    &mc,
+                )
+                .map(Self)
+            }
+
+            /// Train using external fastText embeddings loaded from a `.bin` file.
+            pub fn train_with_external_fasttext(
+                samples: &[TrainingSample],
+                embeddings: FastTextEmbeddings,
+                config: $config_type,
+                threads: Option<usize>,
+            ) -> Result<Self, VecEyesError> {
+                let mc = AdvancedModelConfig {
+                    $config_field: Some(config),
+                    threads,
+                    ..Default::default()
+                };
+                AdvancedClassifier::train_with_external_fasttext(
+                    $method,
+                    samples,
+                    embeddings,
+                    ClassificationLabel::WebAttack,
+                    ClassificationLabel::RawData,
+                    &mc,
+                )
+                .map(Self)
+            }
+
+            /// Persist to a JSON file.
+            pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
+                self.0.save(path)
+            }
+
+            /// Load from a JSON file.
+            pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
+                AdvancedClassifier::load(path).map(Self)
+            }
+
+            /// Persist to a bincode file (fast, compact).
+            pub fn save_bincode<P: AsRef<std::path::Path>>(
+                &self,
+                path: P,
+            ) -> Result<(), VecEyesError> {
+                self.0.save_bincode(path)
+            }
+
+            /// Load from a bincode file.
+            pub fn load_bincode<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
+                AdvancedClassifier::load_bincode(path).map(Self)
+            }
+
+            /// Save NLP pipeline and ML weights to separate bincode files.
+            pub fn save_split_bincode<
+                P: AsRef<std::path::Path>,
+                Q: AsRef<std::path::Path>,
+            >(
+                &self,
+                nlp_path: P,
+                ml_path: Q,
+            ) -> Result<(), VecEyesError> {
+                self.0.save_split_bincode(nlp_path, ml_path)
+            }
+
+            /// Load from two bincode files written by `save_split_bincode`.
+            pub fn load_split_bincode<
+                P: AsRef<std::path::Path>,
+                Q: AsRef<std::path::Path>,
+            >(
+                nlp_path: P,
+                ml_path: Q,
+            ) -> Result<Self, VecEyesError> {
+                AdvancedClassifier::load_split_bincode(nlp_path, ml_path).map(Self)
+            }
+        }
+
+        impl Classifier for $name {
+            fn classify_text(
+                &self,
+                text: &str,
+                mode: ScoreSumMode,
+                matchers: &[Box<dyn RuleMatcher>],
+            ) -> ClassificationResult {
+                self.0.classify_text(text, mode, matchers)
+            }
+
+            fn classify_batch(
+                &self,
+                texts: &[&str],
+                mode: ScoreSumMode,
+                matchers: &[Box<dyn RuleMatcher>],
+            ) -> Vec<ClassificationResult> {
+                self.0.classify_batch(texts, mode, matchers)
+            }
+        }
+
+        impl From<$name> for Box<dyn Classifier> {
+            fn from(v: $name) -> Self {
+                Box::new(v)
+            }
+        }
+    };
+}
+
+impl_advanced_classifier!(
+    LogisticClassifier,
+    AdvancedMethod::LogisticRegression,
+    logistic,
+    LogisticRegressionConfig
+);
+impl_advanced_classifier!(SvmClassifier, AdvancedMethod::Svm, svm, SvmConfig);
+impl_advanced_classifier!(
+    RandomForestClassifier,
+    AdvancedMethod::RandomForest,
+    random_forest,
+    RandomForestConfig
+);
+impl_advanced_classifier!(
+    GradientBoostingClassifier,
+    AdvancedMethod::GradientBoosting,
+    gradient_boosting,
+    GradientBoostingConfig
+);
+
+// IsolationForest is the exception: hot_label / cold_label determine which class
+// is treated as the anomaly, so they are explicit parameters.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IsolationForestClassifier(AdvancedClassifier);
+
+impl IsolationForestClassifier {
+    /// Train an isolation-forest anomaly detector.
+    ///
+    /// `hot_label` is the anomaly class (e.g. `WebAttack`); `cold_label` is the
+    /// normal class (e.g. `RawData`).  Requires a dense embedding NLP option
+    /// (`Word2Vec` or `FastText`).
+    pub fn train(
+        samples: &[TrainingSample],
+        nlp: NlpOption,
+        config: IsolationForestConfig,
+        hot_label: ClassificationLabel,
+        cold_label: ClassificationLabel,
+        threads: Option<usize>,
+        embedding_dims: usize,
+    ) -> Result<Self, VecEyesError> {
+        let mc = AdvancedModelConfig {
+            isolation_forest: Some(config),
+            threads,
+            embedding_dimensions: Some(embedding_dims.max(1)),
+            ..Default::default()
+        };
+        AdvancedClassifier::train(
+            AdvancedMethod::IsolationForest,
+            samples,
+            nlp,
+            hot_label,
+            cold_label,
+            &mc,
+        )
+        .map(Self)
+    }
+
+    /// Train using external fastText embeddings.
+    pub fn train_with_external_fasttext(
+        samples: &[TrainingSample],
+        embeddings: FastTextEmbeddings,
+        config: IsolationForestConfig,
+        hot_label: ClassificationLabel,
+        cold_label: ClassificationLabel,
+        threads: Option<usize>,
+    ) -> Result<Self, VecEyesError> {
+        let mc = AdvancedModelConfig {
+            isolation_forest: Some(config),
+            threads,
+            ..Default::default()
+        };
+        AdvancedClassifier::train_with_external_fasttext(
+            AdvancedMethod::IsolationForest,
+            samples,
+            embeddings,
+            hot_label,
+            cold_label,
+            &mc,
+        )
+        .map(Self)
+    }
+
+    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
+        self.0.save(path)
+    }
+    pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
+        AdvancedClassifier::load(path).map(Self)
+    }
+    pub fn save_bincode<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
+        self.0.save_bincode(path)
+    }
+    pub fn load_bincode<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
+        AdvancedClassifier::load_bincode(path).map(Self)
+    }
+    pub fn save_split_bincode<P: AsRef<std::path::Path>, Q: AsRef<std::path::Path>>(
+        &self,
+        nlp_path: P,
+        ml_path: Q,
+    ) -> Result<(), VecEyesError> {
+        self.0.save_split_bincode(nlp_path, ml_path)
+    }
+    pub fn load_split_bincode<P: AsRef<std::path::Path>, Q: AsRef<std::path::Path>>(
+        nlp_path: P,
+        ml_path: Q,
+    ) -> Result<Self, VecEyesError> {
+        AdvancedClassifier::load_split_bincode(nlp_path, ml_path).map(Self)
+    }
+}
+
+impl Classifier for IsolationForestClassifier {
+    fn classify_text(
+        &self,
+        text: &str,
+        mode: ScoreSumMode,
+        matchers: &[Box<dyn RuleMatcher>],
+    ) -> ClassificationResult {
+        self.0.classify_text(text, mode, matchers)
+    }
+    fn classify_batch(
+        &self,
+        texts: &[&str],
+        mode: ScoreSumMode,
+        matchers: &[Box<dyn RuleMatcher>],
+    ) -> Vec<ClassificationResult> {
+        self.0.classify_batch(texts, mode, matchers)
+    }
+}
+
+impl From<IsolationForestClassifier> for Box<dyn Classifier> {
+    fn from(v: IsolationForestClassifier) -> Self {
+        Box::new(v)
+    }
+}

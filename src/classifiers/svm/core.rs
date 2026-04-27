@@ -91,15 +91,17 @@ impl KernelMap {
                 let rows = matrix.shape()[0];
                 let n_lm = ref_matrix.shape()[0];
                 let mut mapped = Array2::<f32>::zeros((rows, n_lm));
-                for row in 0..rows {
-                    let lhs = matrix.row(row);
-                    let lhs_slice = lhs.as_slice().unwrap_or(&[]);
-                    for col in 0..n_lm {
-                        let rhs = ref_matrix.row(col);
-                        mapped[[row, col]] =
-                            explicit_kernel(lhs_slice, rhs.as_slice().unwrap_or(&[]), config);
-                    }
-                }
+                mapped
+                    .axis_iter_mut(ndarray::Axis(0))
+                    .into_par_iter()
+                    .zip(matrix.axis_iter(ndarray::Axis(0)).into_par_iter())
+                    .for_each(|(mut out_row, lhs)| {
+                        let lhs_slice = lhs.as_slice().unwrap_or(&[]);
+                        for col in 0..n_lm {
+                            let rhs = ref_matrix.row(col);
+                            out_row[col] = explicit_kernel(lhs_slice, rhs.as_slice().unwrap_or(&[]), config);
+                        }
+                    });
                 mapped
             }
         }

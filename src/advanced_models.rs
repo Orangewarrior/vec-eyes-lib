@@ -256,36 +256,29 @@ impl FeaturePipeline {
 }
 
 fn transform_count<S: AsRef<str>>(model: &TfIdfModel, texts: &[S]) -> DenseMatrix {
-    let rows = texts.len();
+    use rayon::prelude::*;
     let cols = model.vocab.len();
-    let mut matrix = ndarray::Array2::<f32>::zeros((rows, cols));
-
-    for row in 0..texts.len() {
-        let normalized = normalize_text(texts[row].as_ref());
-        let tokens = tokenize(&normalized);
-        for token in tokens {
-            if let Some(index) = model.token_to_index.get(&token) {
-                matrix[[row, *index]] += 1.0;
-            }
-        }
-        l2_normalize_row(&mut matrix, row);
-    }
-
+    let refs: Vec<&str> = texts.iter().map(|s| s.as_ref()).collect();
+    let mut matrix = ndarray::Array2::<f32>::zeros((refs.len(), cols));
     matrix
-}
-
-fn l2_normalize_row(matrix: &mut DenseMatrix, row: usize) {
-    let mut norm = 0.0f32;
-    for col in 0..matrix.shape()[1] {
-        let v = matrix[[row, col]];
-        norm += v * v;
-    }
-    norm = norm.sqrt();
-    if norm > 0.0 {
-        for col in 0..matrix.shape()[1] {
-            matrix[[row, col]] /= norm;
-        }
-    }
+        .axis_iter_mut(ndarray::Axis(0))
+        .into_par_iter()
+        .zip(refs.par_iter())
+        .for_each(|(mut row, &text)| {
+            let normalized = normalize_text(text);
+            let tokens = tokenize(&normalized);
+            for token in tokens {
+                if let Some(index) = model.token_to_index.get(&token) {
+                    row[*index] += 1.0;
+                }
+            }
+            let norm_sq: f32 = row.iter().map(|v| v * v).sum();
+            let norm = norm_sq.sqrt();
+            if norm > 0.0 {
+                row.mapv_inplace(|v| v / norm);
+            }
+        });
+    matrix
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

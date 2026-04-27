@@ -1,4 +1,4 @@
-use ndarray::{Array1, Array2, ArrayView1};
+use ndarray::Array2;
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

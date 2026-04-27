@@ -11,30 +11,34 @@ use crate::parallel::install_pool;
 /// Compute column-wise mean and std, normalise every row in place.
 /// Returns `(mean, std)` for use at inference time.
 pub(crate) fn apply_feature_normalization(matrix: &mut DenseMatrix) -> (Vec<f32>, Vec<f32>) {
+    let rows = matrix.shape()[0].max(1) as f32;
     let cols = matrix.shape()[1];
-    let rows = matrix.shape()[0].max(1);
-    let mut mean = vec![0.0f32; cols];
-    let mut std_vals = vec![1.0f32; cols];
-    for col in 0..cols {
-        let col_view = matrix.column(col);
-        mean[col] = col_view.iter().copied().sum::<f32>() / rows as f32;
-        let m = mean[col];
-        let var = col_view
-            .iter()
-            .map(|&v| (v - m) * (v - m))
-            .sum::<f32>()
-            / rows as f32;
-        std_vals[col] = var.sqrt().max(1e-6);
-    }
-    let mean_view = ndarray::ArrayView1::from(mean.as_slice());
-    let std_view = ndarray::ArrayView1::from(std_vals.as_slice());
-    for mut row in matrix.rows_mut() {
+
+    // BLAS/SIMD-backed column-wise mean via ndarray reduction.
+    let mean = matrix
+        .mean_axis(ndarray::Axis(0))
+        .unwrap_or_else(|| ndarray::Array1::zeros(cols));
+
+    // Column-wise variance: accumulate (x - mean)^2 row-by-row with Zip
+    // so each inner loop is contiguous (row-major) and LLVM-vectorisable.
+    let mut var = ndarray::Array1::<f32>::zeros(cols);
+    ndarray::Zip::from(matrix.rows()).for_each(|row| {
+        ndarray::Zip::from(&mut var)
+            .and(&row)
+            .and(&mean)
+            .for_each(|v, &x, &m| *v += (x - m) * (x - m));
+    });
+    let std_vals = var.mapv(|v| (v / rows).sqrt().max(1e-6));
+
+    // Normalize rows in-place.
+    ndarray::Zip::from(matrix.rows_mut()).for_each(|mut row| {
         ndarray::Zip::from(&mut row)
-            .and(mean_view)
-            .and(std_view)
+            .and(&mean)
+            .and(&std_vals)
             .for_each(|v, &m, &s| *v = (*v - m) / s);
-    }
-    (mean, std_vals)
+    });
+
+    (mean.to_vec(), std_vals.to_vec())
 }
 
 pub(crate) fn train(

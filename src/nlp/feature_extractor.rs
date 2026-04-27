@@ -93,25 +93,33 @@ pub fn fit_tfidf_with_config<S: AsRef<str>>(texts: &[S], min_df: usize, max_df_r
 /// Uses `tf = 1 + ln(count)` (Salton & Buckley 1988) so high-frequency terms
 /// don't dominate and the scale is consistent across document lengths.
 pub fn transform_tfidf<S: AsRef<str>>(model: &TfIdfModel, texts: &[S]) -> DenseMatrix {
-    let rows = texts.len();
+    use rayon::prelude::*;
     let cols = model.vocab.len();
-    let mut matrix = Array2::<f32>::zeros((rows, cols));
-    for row in 0..rows {
-        let normalized = normalize_text(texts[row].as_ref());
-        let tokens = tokenize(&normalized);
-        let mut counts: HashMap<usize, usize> = HashMap::new();
-        for token in tokens {
-            if let Some(&index) = model.token_to_index.get(&token) {
-                *counts.entry(index).or_insert(0) += 1;
+    let refs: Vec<&str> = texts.iter().map(|s| s.as_ref()).collect();
+    let mut matrix = Array2::<f32>::zeros((refs.len(), cols));
+    matrix
+        .axis_iter_mut(ndarray::Axis(0))
+        .into_par_iter()
+        .zip(refs.par_iter())
+        .for_each(|(mut row, &text)| {
+            let normalized = normalize_text(text);
+            let tokens = tokenize(&normalized);
+            let mut counts: HashMap<usize, usize> = HashMap::new();
+            for token in tokens {
+                if let Some(&index) = model.token_to_index.get(&token) {
+                    *counts.entry(index).or_insert(0) += 1;
+                }
             }
-        }
-        if counts.is_empty() { continue; }
-        for (index, count) in counts {
-            let tf = 1.0 + (count as f32).ln();
-            matrix[[row, index]] = tf * model.idf[index];
-        }
-        l2_normalize_row(&mut matrix, row);
-    }
+            if counts.is_empty() { return; }
+            for (index, count) in counts {
+                row[index] = (1.0 + (count as f32).ln()) * model.idf[index];
+            }
+            let norm_sq: f32 = row.iter().map(|v| v * v).sum();
+            let norm = norm_sq.sqrt();
+            if norm > 1e-12 {
+                row.mapv_inplace(|v| v / norm);
+            }
+        });
     matrix
 }
 
@@ -151,34 +159,40 @@ pub fn dense_matrix_from_texts_with_tfidf<S: AsRef<str>>(
     texts: &[S],
     tfidf_model: Option<&TfIdfModel>,
 ) -> DenseMatrix {
+    use rayon::prelude::*;
     let dims = model.dims;
-    let mut matrix = Array2::<f32>::zeros((texts.len(), dims));
-    let mut acc = Array1::<f32>::zeros(dims);
-
-    for (row_idx, text) in texts.iter().enumerate() {
-        let normalized = normalize_text(text.as_ref());
-        let tokens = tokenize(&normalized);
-        if tokens.is_empty() { continue; }
-
-        acc.fill(0.0);
-        let mut weight_sum = 0.0f32;
-
-        for token in &tokens {
-            let vector = model.vector_for(token);
-            let idf_weight = tfidf_model
-                .and_then(|m| m.token_to_index.get(token).map(|&idx| m.idf[idx]))
-                .unwrap_or(1.0);
-            weight_sum += idf_weight;
-            // Fused scaled accumulation — SIMD-vectorised by LLVM.
-            ndarray::Zip::from(&mut acc)
-                .and(ArrayView1::from(vector.as_slice()))
-                .for_each(|a, &v| *a += v * idf_weight);
-        }
-
-        let denom = weight_sum.max(1e-6);
-        matrix.row_mut(row_idx).assign(&acc.mapv(|v| v / denom));
-        l2_normalize_row(&mut matrix, row_idx);
-    }
+    let refs: Vec<&str> = texts.iter().map(|s| s.as_ref()).collect();
+    let mut matrix = Array2::<f32>::zeros((refs.len(), dims));
+    matrix
+        .axis_iter_mut(ndarray::Axis(0))
+        .into_par_iter()
+        .zip(refs.par_iter())
+        .for_each(|(mut row, &text)| {
+            let normalized = normalize_text(text);
+            let tokens = tokenize(&normalized);
+            if tokens.is_empty() { return; }
+            // Per-row accumulator — avoids shared mutable state across threads.
+            let mut acc = vec![0f32; dims];
+            let mut weight_sum = 0.0f32;
+            for token in &tokens {
+                let vector = model.vector_for(token);
+                let idf_weight = tfidf_model
+                    .and_then(|m| m.token_to_index.get(token).map(|&idx| m.idf[idx]))
+                    .unwrap_or(1.0);
+                weight_sum += idf_weight;
+                // Fused scaled accumulation — SIMD-vectorised by LLVM.
+                acc.iter_mut()
+                    .zip(vector.iter().take(dims))
+                    .for_each(|(a, &v)| *a += v * idf_weight);
+            }
+            let denom = weight_sum.max(1e-6);
+            row.iter_mut().zip(acc.iter()).for_each(|(r, &a)| *r = a / denom);
+            let norm_sq: f32 = row.iter().map(|v| v * v).sum();
+            let norm = norm_sq.sqrt();
+            if norm > 1e-12 {
+                row.mapv_inplace(|v| v / norm);
+            }
+        });
     matrix
 }
 
@@ -285,18 +299,23 @@ fn train_context_embeddings<S: AsRef<str>>(
 
     // Optional FastText subword enrichment — blend subword mean into W_in.
     if let Some(cfg) = fasttext {
-        for (token, vec) in vocab_list.iter().zip(w_in.iter_mut()) {
+        use rayon::prelude::*;
+        vocab_list.par_iter().zip(w_in.par_iter_mut()).for_each(|(token, vec)| {
             let sub = fasttext_vector(token, dims, cfg);
-            for (v, s) in vec.iter_mut().zip(sub.iter()) { *v += s * 0.15; }
-        }
+            vec.iter_mut().zip(sub.iter()).for_each(|(v, &s)| *v += s * 0.15);
+        });
     }
 
     // L2-normalise W_in before returning.
-    for vec in &mut w_in {
-        let norm: f32 = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
-        if norm > 1e-12 {
-            vec.iter_mut().for_each(|v| *v /= norm);
-        }
+    {
+        use rayon::prelude::*;
+        w_in.par_iter_mut().for_each(|vec| {
+            let norm: f32 = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
+            if norm > 1e-12 {
+                let inv = 1.0 / norm;
+                vec.iter_mut().for_each(|v| *v *= inv);
+            }
+        });
     }
 
     vocab_list.into_iter().zip(w_in).collect()

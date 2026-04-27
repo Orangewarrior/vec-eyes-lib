@@ -199,6 +199,8 @@ enum FeaturePipeline {
     Word2Vec { model: WordEmbeddingModel, idf: TfIdfModel },
     FastText { model: WordEmbeddingModel, idf: TfIdfModel },
     ExternalFastText { embeddings: FastTextEmbeddings, idf: TfIdfModel },
+    /// Unified external embeddings — fastText or word2vec, selected at build time.
+    ExternalEmbeddings { embeddings: crate::nlp::ExternalEmbeddings, idf: TfIdfModel },
 }
 
 impl FeaturePipeline {
@@ -245,6 +247,9 @@ impl FeaturePipeline {
             Self::FastText { model, idf } => dense_matrix_from_texts_with_tfidf(model, texts, Some(idf)),
             Self::ExternalFastText { embeddings, idf } => {
                 crate::nlp::fasttext_bin::embed_texts(embeddings, texts, Some(idf))
+            }
+            Self::ExternalEmbeddings { embeddings, idf } => {
+                crate::nlp::external_embeddings::embed_external(embeddings, texts, Some(idf))
             }
         }
     }
@@ -413,6 +418,26 @@ impl AdvancedClassifier {
         let texts: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
         let idf = fit_tfidf(&texts);
         let pipeline = FeaturePipeline::ExternalFastText { embeddings, idf };
+        let matrix = pipeline.transform_batch(&texts);
+        let inner = Self::fit_inner(method, &matrix, samples, hot_label, cold_label, config)?;
+        Ok(Self { pipeline, inner })
+    }
+
+    /// Train using a unified [`ExternalEmbeddings`] — either fastText or word2vec.
+    ///
+    /// A TF-IDF model is fitted on the training corpus and stored alongside
+    /// the embeddings so inference uses the same IDF weights as training.
+    pub fn train_with_external_embeddings(
+        method: AdvancedMethod,
+        samples: &[TrainingSample],
+        embeddings: crate::nlp::ExternalEmbeddings,
+        hot_label: ClassificationLabel,
+        cold_label: ClassificationLabel,
+        config: &AdvancedModelConfig,
+    ) -> Result<Self, VecEyesError> {
+        let texts: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
+        let idf = fit_tfidf(&texts);
+        let pipeline = FeaturePipeline::ExternalEmbeddings { embeddings, idf };
         let matrix = pipeline.transform_batch(&texts);
         let inner = Self::fit_inner(method, &matrix, samples, hot_label, cold_label, config)?;
         Ok(Self { pipeline, inner })
@@ -626,6 +651,29 @@ macro_rules! impl_advanced_classifier {
                 .map(Self)
             }
 
+            /// Train using a unified [`ExternalEmbeddings`] (fastText or word2vec).
+            pub fn train_with_external_embeddings(
+                samples: &[TrainingSample],
+                embeddings: crate::nlp::ExternalEmbeddings,
+                config: $config_type,
+                threads: Option<usize>,
+            ) -> Result<Self, VecEyesError> {
+                let mc = AdvancedModelConfig {
+                    $config_field: Some(config),
+                    threads,
+                    ..Default::default()
+                };
+                AdvancedClassifier::train_with_external_embeddings(
+                    $method,
+                    samples,
+                    embeddings,
+                    ClassificationLabel::WebAttack,
+                    ClassificationLabel::RawData,
+                    &mc,
+                )
+                .map(Self)
+            }
+
             /// Persist to a JSON file.
             pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
                 self.0.save(path)
@@ -773,6 +821,31 @@ impl IsolationForestClassifier {
             ..Default::default()
         };
         AdvancedClassifier::train_with_external_fasttext(
+            AdvancedMethod::IsolationForest,
+            samples,
+            embeddings,
+            hot_label,
+            cold_label,
+            &mc,
+        )
+        .map(Self)
+    }
+
+    /// Train using a unified [`ExternalEmbeddings`] (fastText or word2vec).
+    pub fn train_with_external_embeddings(
+        samples: &[TrainingSample],
+        embeddings: crate::nlp::ExternalEmbeddings,
+        config: IsolationForestConfig,
+        hot_label: ClassificationLabel,
+        cold_label: ClassificationLabel,
+        threads: Option<usize>,
+    ) -> Result<Self, VecEyesError> {
+        let mc = AdvancedModelConfig {
+            isolation_forest: Some(config),
+            threads,
+            ..Default::default()
+        };
+        AdvancedClassifier::train_with_external_embeddings(
             AdvancedMethod::IsolationForest,
             samples,
             embeddings,

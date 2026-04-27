@@ -164,6 +164,8 @@ pub enum DenseFeatureModel {
     Word2Vec(WordEmbeddingModel),
     FastText(WordEmbeddingModel),
     ExternalFastText { embeddings: FastTextEmbeddings, idf: TfIdfModel },
+    /// Unified external embeddings — fastText or word2vec.
+    ExternalEmbeddings { embeddings: crate::nlp::ExternalEmbeddings, idf: TfIdfModel },
 }
 
 // ── Internal structs for split bincode persistence ───────────────────────────
@@ -258,6 +260,34 @@ impl KnnClassifier {
         Ok(Self::from_parts(metric, threads, labels, matrix, model, k, normalize_features, feature_mean, feature_std))
     }
 
+    /// Train a KNN classifier using a unified [`ExternalEmbeddings`] —
+    /// either fastText (with subword OOV) or word2vec (with centroid OOV).
+    pub fn train_with_external_embeddings(
+        samples: &[TrainingSample],
+        embeddings: crate::nlp::ExternalEmbeddings,
+        metric: DistanceMetric,
+        k: usize,
+        threads: Option<usize>,
+        normalize_features: bool,
+    ) -> Result<Self, VecEyesError> {
+        let texts: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
+        let labels: Vec<ClassificationLabel> = samples.iter().map(|s| s.label.clone()).collect();
+        let idf = fit_tfidf(&texts);
+        let mut matrix =
+            crate::nlp::external_embeddings::embed_external(&embeddings, &texts, Some(&idf));
+        let (feature_mean, feature_std) = if normalize_features {
+            let (mean, std) = core::apply_feature_normalization(&mut matrix);
+            (Some(mean), Some(std))
+        } else {
+            (None, None)
+        };
+        let model = DenseFeatureModel::ExternalEmbeddings { embeddings, idf };
+        Ok(Self::from_parts(
+            metric, threads, labels, matrix, model, k,
+            normalize_features, feature_mean, feature_std,
+        ))
+    }
+
     // ── Persistence ──────────────────────────────────────────────────────────
 
     /// Save the entire model as JSON (human-readable, larger).
@@ -342,6 +372,9 @@ impl KnnClassifier {
             DenseFeatureModel::FastText(inner)  => dense_matrix_from_texts(inner, &texts),
             DenseFeatureModel::ExternalFastText { embeddings, idf } => {
                 crate::nlp::fasttext_bin::embed_texts(embeddings, &texts, Some(idf))
+            }
+            DenseFeatureModel::ExternalEmbeddings { embeddings, idf } => {
+                crate::nlp::external_embeddings::embed_external(embeddings, &texts, Some(idf))
             }
         };
         self.apply_feature_normalization(&mut m);

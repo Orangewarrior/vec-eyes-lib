@@ -2,8 +2,12 @@ pub mod normalizer;
 pub mod tokenizer;
 pub mod feature_extractor;
 pub mod fasttext_bin;
+pub mod word2vec_bin;
+pub mod external_embeddings;
 
 pub use fasttext_bin::{FastTextBin, FastTextEmbeddings};
+pub use word2vec_bin::{Word2VecBin, Word2VecEmbeddings};
+pub use external_embeddings::ExternalEmbeddings;
 
 pub use feature_extractor::{
     dense_matrix_from_texts, dense_matrix_from_texts_with_tfidf, fit_tfidf, fit_tfidf_with_config, transform_tfidf, DenseMatrix, FastTextConfig,

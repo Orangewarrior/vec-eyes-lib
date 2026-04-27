@@ -61,8 +61,9 @@ pub(crate) fn train(
     let mut matrix = match &model {
         DenseFeatureModel::Word2Vec(inner) => dense_matrix_from_texts(inner, &texts),
         DenseFeatureModel::FastText(inner) => dense_matrix_from_texts(inner, &texts),
-        // ExternalFastText is never constructed by this path — train_with_external_fasttext handles it
+        // External-embedding variants are never constructed by this path.
         DenseFeatureModel::ExternalFastText { .. } => unreachable!("ExternalFastText not reachable from core::train"),
+        DenseFeatureModel::ExternalEmbeddings { .. } => unreachable!("ExternalEmbeddings not reachable from core::train"),
     };
 
     let (feature_mean, feature_std) = if normalize_features {

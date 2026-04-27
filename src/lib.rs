@@ -75,6 +75,8 @@ pub use matcher::{
 };
 pub use nlp::{FastTextConfig, FastTextConfigBuilder, NlpOption};
 pub use nlp::fasttext_bin::{FastTextBin, FastTextEmbeddings};
+pub use nlp::word2vec_bin::{Word2VecBin, Word2VecEmbeddings};
+pub use nlp::external_embeddings::ExternalEmbeddings;
 pub use report::{ClassificationReport, ClassificationRecord};
 
 pub use dataset::read_text_file_limited;

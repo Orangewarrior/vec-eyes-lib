@@ -29,7 +29,7 @@ use crate::classifiers::knn::{DistanceMetric, KnnClassifier};
 use crate::dataset::{load_training_samples, TrainingSample};
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
-use crate::nlp::{FastTextEmbeddings, NlpOption};
+use crate::nlp::{ExternalEmbeddings, FastTextEmbeddings, NlpOption};
 
 /// Entry point for the typed classifier factory.
 pub struct ClassifierSpec;
@@ -133,7 +133,7 @@ pub struct KnnSpec {
     threads: Option<usize>,
     normalize: bool,
     data: TrainingData,
-    external_embeddings: Option<FastTextEmbeddings>,
+    external_embeddings: Option<ExternalEmbeddings>,
 }
 
 impl KnnSpec {
@@ -164,16 +164,22 @@ impl KnnSpec {
         self
     }
 
-    /// Use pre-loaded external FastText embeddings as the feature pipeline.
-    pub fn external_fasttext(mut self, embeddings: FastTextEmbeddings) -> Self {
+    /// Use pre-loaded external embeddings (fastText or word2vec) as the feature pipeline.
+    pub fn external_embeddings(mut self, embeddings: ExternalEmbeddings) -> Self {
         self.external_embeddings = Some(embeddings);
+        self
+    }
+
+    /// Convenience wrapper — equivalent to `.external_embeddings(ExternalEmbeddings::FastText(e))`.
+    pub fn external_fasttext(mut self, embeddings: FastTextEmbeddings) -> Self {
+        self.external_embeddings = Some(ExternalEmbeddings::FastText(embeddings));
         self
     }
 
     pub fn build(self) -> Result<KnnClassifier, VecEyesError> {
         let samples = self.data.resolve()?;
         if let Some(emb) = self.external_embeddings {
-            return KnnClassifier::train_with_external_fasttext(
+            return KnnClassifier::train_with_external_embeddings(
                 &samples, emb, self.metric, self.k, self.threads, self.normalize,
             );
         }
@@ -192,7 +198,7 @@ pub struct AdvancedSpec {
     config: AdvancedModelConfig,
     nlp: NlpOption,
     data: TrainingData,
-    external_embeddings: Option<FastTextEmbeddings>,
+    external_embeddings: Option<ExternalEmbeddings>,
 }
 
 impl AdvancedSpec {
@@ -219,9 +225,15 @@ impl AdvancedSpec {
         self
     }
 
-    /// Use pre-loaded external FastText embeddings as the feature pipeline.
-    pub fn external_fasttext(mut self, embeddings: FastTextEmbeddings) -> Self {
+    /// Use pre-loaded external embeddings (fastText or word2vec) as the feature pipeline.
+    pub fn external_embeddings(mut self, embeddings: ExternalEmbeddings) -> Self {
         self.external_embeddings = Some(embeddings);
+        self
+    }
+
+    /// Convenience wrapper — equivalent to `.external_embeddings(ExternalEmbeddings::FastText(e))`.
+    pub fn external_fasttext(mut self, embeddings: FastTextEmbeddings) -> Self {
+        self.external_embeddings = Some(ExternalEmbeddings::FastText(embeddings));
         self
     }
 
@@ -230,7 +242,7 @@ impl AdvancedSpec {
         let cold_label = self.data.cold_label.clone();
         let samples = self.data.resolve()?;
         if let Some(emb) = self.external_embeddings {
-            return AdvancedClassifier::train_with_external_fasttext(
+            return AdvancedClassifier::train_with_external_embeddings(
                 self.method, &samples, emb, hot_label, cold_label, &self.config,
             );
         }

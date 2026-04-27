@@ -7,9 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [3.0.0] — Release Notes
+## [3.0.0] - 2026-04-26
 
 ### Added
+
+#### FastText `.bin` loader (`src/nlp/fasttext_bin.rs`)
+
+Pure-Rust parser for binary files produced by the external fastText CLI (format v12). No C library or FFI required. Reads the magic number, args struct (dims, minn, maxn, bucket), dictionary, quantization flag, and flat float32 input matrix.
+
+Key types:
+- `FastTextBin` — raw loader; holds word index + full matrix in memory
+- `FastTextEmbeddings` — extracted subset of vectors; serde-serializable for fast persistence
+
+Key methods:
+- `FastTextBin::load(path)` — parse a `.bin` file
+- `FastTextBin::extract_all()` — extract every word and bucket vector
+- `FastTextBin::extract_for_vocab(vocab)` — extract only vectors relevant to a given vocabulary (much smaller output)
+- `FastTextEmbeddings::vector_for(word)` — in-vocabulary lookup or subword OOV composition
+- `FastTextEmbeddings::save_bincode / load_bincode` — persist/reload extracted embeddings
+
+#### Subword OOV composition (FNV-1a hash)
+
+OOV words are represented by averaging the bucket vectors for all character n-grams in `[minn, maxn]`, matching fastText C++ exactly:
+- Boundary markers `<` / `>` added around the word before n-gram extraction
+- FNV-1a: `h ^= (b as i8 as i32 as u32)` (sign-extend byte) then `h.wrapping_mul(16777619)`
+- Standalone `<` and `>` n-grams are excluded (matches fastText's `computeSubwords`)
+
+#### `train_with_external_fasttext` on all classifiers
+
+Every classifier type gains a constructor that accepts pre-loaded `FastTextEmbeddings` instead of training its own embedding model:
+
+- `KnnClassifier::train_with_external_fasttext(samples, embeddings, metric, k, threads, normalize_features)`
+- `LogisticClassifier::train_with_external_fasttext(samples, embeddings, config, threads, dims)`
+- `SvmClassifier::train_with_external_fasttext(...)`
+- `RandomForestClassifier::train_with_external_fasttext(...)`
+- `GradientBoostingClassifier::train_with_external_fasttext(...)`
+- `IsolationForestClassifier::train_with_external_fasttext(samples, embeddings, config, hot_label, cold_label, threads)`
+
+#### Bincode persistence for all classifiers
+
+All public classifier types now support fast binary save/load via `bincode v1`:
+
+| Method pair | File count | Use case |
+|---|---|---|
+| `save_bincode / load_bincode` | 1 | Fast production reload |
+| `save_split_bincode / load_split_bincode` | 2 (`.nlp.bin` + `.ml.bin`) | Share NLP pipeline across multiple ML heads |
+
+Types with bincode support: `KnnClassifier`, `BayesClassifier`, `LogisticClassifier`, `SvmClassifier`, `RandomForestClassifier`, `GradientBoostingClassifier`, `IsolationForestClassifier`, `AdvancedClassifier`, `FastTextEmbeddings`.
+
+#### Standalone typed classifier wrappers
+
+Five new concrete `struct` types replacing the generic `AdvancedClassifier` wrapper. Each type wraps `AdvancedClassifier` internally but exposes a typed, method-specific API with the correct config type:
+
+- `LogisticClassifier` — `LogisticRegressionConfig`
+- `SvmClassifier` — `SvmConfig`
+- `RandomForestClassifier` — `RandomForestConfig`
+- `GradientBoostingClassifier` — `GradientBoostingConfig`
+- `IsolationForestClassifier` — `IsolationForestConfig` + explicit `hot_label` / `cold_label`
+
+All five implement the `Classifier` trait and are exported from the crate root.
+
+#### `VecEyesError::Serialization` variant
+
+New error variant for bincode encode/decode failures:
+```rust
+#[error("serialization error: {0}")]
+Serialization(String),
+```
+
+#### `docs/save-load.md` — persistence documentation
+
+Comprehensive guide covering:
+- Format comparison table (JSON vs bincode single vs bincode split)
+- Full working examples for every classifier type using the three UCI datasets
+- External FastText workflow (parse once → save embeddings → reload → train)
+- Error handling guide with `VecEyesError` match arms
+
+#### `docs/real_examples.md` — real classification examples
+
+Three complete standalone Rust projects (security, biology, finance) covering:
+- UCI dataset download and preparation scripts
+- Full `Cargo.toml` + `src/main.rs` for each example
+- Build and run commands with expected output
+
+#### Save/load test suite (`tests/save_load.rs`)
+
+27 integration tests covering round-trip persistence for all classifier types:
+- JSON save/load for `KnnClassifier` and `BayesClassifier`
+- Bincode single-file round-trips for all classifier types
+- Split bincode round-trips for all advanced classifier types
+- `FastTextEmbeddings` bincode persistence
+- Verify classification result is identical before and after round-trip
 
 #### 3.1 `Classifier::classify_batch` — batch inference API
 **Files:** `src/classifier.rs`, `src/advanced_models.rs`
@@ -21,7 +109,8 @@ pipeline once (amortising embedding/TF-IDF cost), then score each row in paralle
 via rayon, slicing the batch matrix with `ndarray::s!` to avoid copies.
 
 #### 3.2 Model serialization — `save` / `load`
-**Files:** `src/classifiers/bayes/mod.rs`, `src/classifiers/knn/mod.rs`, `src/advanced_models.rs`, `src/nlp/feature_extractor.rs`, and all inner model structs
+**Files:** `src/classifiers/bayes/mod.rs`, `src/classifiers/knn/mod.rs`,
+`src/advanced_models.rs`, `src/nlp/feature_extractor.rs`, and all inner model structs
 
 `serde::Serialize` / `serde::Deserialize` added to every internal type:
 `TfIdfModel`, `WordEmbeddingModel`, `DistanceMetric`, `DenseFeatureModel`,
@@ -44,14 +133,15 @@ New public module exposed as `vec_eyes_lib::metrics` with:
 - `weighted_f1(y_true, y_pred, labels) -> f32`
 - `roc_auc(y_true, y_scores) -> f32` — trapezoidal rule
 - `confusion_matrix(y_true, y_pred, labels) -> Vec<Vec<usize>>`
-- `classification_report(y_true, y_pred, labels) -> ClassificationReport` (returns `ClassMetrics` per class: precision, recall, f1, support)
+- `classification_report(y_true, y_pred, labels) -> ClassificationReport`
+  (returns `ClassMetrics` per class: precision, recall, f1, support)
 
 #### 3.4 `ClassifierBuilder::samples()` — preloaded training data
 **File:** `src/classifier.rs`
 
 Added `pub fn samples(mut self, samples: Vec<TrainingSample>) -> Self` to
 `ClassifierBuilder` as an alternative to `hot_path` / `cold_path`. When
-`samples()` is set, `build()` skips filesystem loading entirely. Enables
+`samples()` is set, `build()` skips filesystem loading entirely. This enables
 in-memory pipelines, unit tests without fixture directories, and programmatic
 data augmentation.
 
@@ -61,59 +151,66 @@ data augmentation.
 `ClassifierSpec` eliminates the `MethodKind` enum + `require_*_config` defensive
 pattern. Each factory method returns a method-specific builder:
 
-```
-ClassifierSpec::bayes()                        -> BayesSpec
-ClassifierSpec::knn_cosine(k)                  -> KnnSpec
-ClassifierSpec::knn_euclidean(k)               -> KnnSpec
-ClassifierSpec::knn_manhattan(k)               -> KnnSpec
-ClassifierSpec::knn_minkowski(k, p)            -> KnnSpec
-ClassifierSpec::logistic_regression(cfg)       -> AdvancedSpec
-ClassifierSpec::random_forest(cfg)             -> AdvancedSpec
-ClassifierSpec::svm(cfg)                       -> AdvancedSpec
-ClassifierSpec::gradient_boosting(cfg)         -> AdvancedSpec
-ClassifierSpec::isolation_forest(cfg)          -> AdvancedSpec
+```rust
+ClassifierSpec::bayes()                  -> BayesSpec
+ClassifierSpec::knn_cosine(k)            -> KnnSpec
+ClassifierSpec::knn_euclidean(k)         -> KnnSpec
+ClassifierSpec::knn_manhattan(k)         -> KnnSpec
+ClassifierSpec::knn_minkowski(k, p)      -> KnnSpec
+ClassifierSpec::logistic_regression(cfg) -> AdvancedSpec
+ClassifierSpec::random_forest(cfg)       -> AdvancedSpec
+ClassifierSpec::svm(cfg)                 -> AdvancedSpec
+ClassifierSpec::gradient_boosting(cfg)   -> AdvancedSpec
+ClassifierSpec::isolation_forest(cfg)    -> AdvancedSpec
 ```
 
 Each spec builder exposes only the relevant knobs (`.nlp()`, `.threads()`,
 `.hot_label()`, `.cold_label()`, `.samples()`, `.training_data()`) and
-provides `.build()` / `.build_boxed()`.
-
----
+provides `.build()` / `.build_boxed()` returning the concrete type or
+`Box<dyn Classifier>`.
 
 ### Fixed
 
 #### 2.8 Eliminate `Vec<String>` clones in NLP pipelines
-**Files:** `src/nlp/feature_extractor.rs`, `src/advanced_models.rs`, `src/classifiers/bayes/core.rs`, `src/classifiers/knn/core.rs`
+**Files:** `src/nlp/feature_extractor.rs`, `src/advanced_models.rs`,
+`src/classifiers/bayes/core.rs`, `src/classifiers/knn/core.rs`
 
-All text-processing functions now generic over `AsRef<str>`. Single-probe
-inference uses a zero-allocation `[text]` array instead of `vec![text.to_string()]`.
+All text-processing functions (`fit_tfidf`, `transform_tfidf`,
+`dense_matrix_from_texts`, `train_word2vec`, `train_fasttext`,
+`train_context_embeddings`, `transform_count`) are now generic over
+`AsRef<str>`. Single-probe inference uses a zero-allocation `[text]` array
+instead of `vec![text.to_string()]`.
 
 #### 2.9 `LabelEncoder` sort/dedup invariant
+**File:** `src/classifiers/*/core.rs`
+
 Added explicit comment above `labels.dedup()` clarifying that the preceding
 `sort()` is mandatory — `dedup` only collapses consecutive duplicates.
 
 #### 2.10 Lazy rule-boost computation
-**Files:** `src/advanced_models.rs`, `src/classifiers/bayes/mod.rs`, `src/classifiers/knn/mod.rs`
+**Files:** `src/advanced_models.rs`, `src/classifiers/bayes/mod.rs`,
+`src/classifiers/knn/mod.rs`
 
-`compute_rule_boost` is now skipped when `ScoreSumMode` is `Off`. Matcher hits
-are still collected via the lighter `find_matches` path.
+`compute_rule_boost` (and the per-label score merge loop) is now skipped when
+`ScoreSumMode` is `Off`. Matcher hits are still collected via the lighter
+direct `find_matches` path, preserving telemetry without paying the full
+scoring cost.
 
 #### 2.11 Configurable per-file size limit
 **Files:** `src/dataset.rs`, `src/config.rs`, `src/classifier.rs`
 
 `MAX_TEXT_FILE_BYTES` renamed to `pub const DEFAULT_MAX_FILE_BYTES`. New
 `read_text_file_limited(path, max_bytes)` accepts a caller-supplied cap.
-`RulesFile` gains `max_file_bytes: Option<u64>`. Fixed
-`collect_files_recursively_with_limit` to honour the `max_bytes` parameter
-instead of always using the global constant.
+`RulesFile` gains an optional `max_file_bytes: Option<u64>` YAML field honoured
+by `run_rules_pipeline`. `collect_files_recursively_with_limit` now correctly
+passes the `max_bytes` parameter through all checks instead of always using the
+global constant.
 
 #### 2.12 Bounded global thread-pool cache
 **File:** `src/parallel.rs`
 
 `cached_pool` enforces `MAX_POOL_CACHE = 32` entries with FIFO eviction so
 the static `HashMap` cannot grow without bound across long-running processes.
-
----
 
 ### Changed
 
@@ -142,11 +239,6 @@ All public types carry `#[deprecated(since = "2.8.0", note = "...")]`:
 
 ---
 
-## Test plan
-
-- [x] `cargo build` — compilação limpa, sem erros
-- [x] `cargo test` — **35/35 testes** passam em todos os suites (`basic`, `advanced_models`, `architecture_api`, `helpers_and_ensemble`, `integration_vec_eyes`, `yaml_realistic`)
-
 ## [2.9.0] - 2026-04-22
 
 ### Fixed — Critical correctness bugs (5 issues)
@@ -167,7 +259,7 @@ The percent-decoding function converted decoded bytes directly to `char` using
 `value as char`, which only works for ASCII. Multi-byte UTF-8 sequences like
 `%C3%A9` (é) were decoded as two invalid separate characters.
 
-**Fix:** 
+**Fix:**
 - Changed output buffer from `String` to `Vec<u8>`
 - Collect decoded bytes, then use `String::from_utf8_lossy()` at the end
 - Now correctly handles all UTF-8 sequences

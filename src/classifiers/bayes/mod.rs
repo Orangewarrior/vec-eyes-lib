@@ -127,6 +127,21 @@ impl BayesClassifier {
             .map_err(|e| VecEyesError::invalid_config("BayesClassifier::load", e.to_string()))
     }
 
+    /// Save the model as a bincode file (fast, compact).
+    pub fn save_bincode<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
+        let bytes = bincode::serialize(self)
+            .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        std::fs::write(path, bytes)?;
+        Ok(())
+    }
+
+    /// Load a model from a bincode file.
+    pub fn load_bincode<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
+        let bytes = std::fs::read(path)?;
+        bincode::deserialize(&bytes)
+            .map_err(|e| VecEyesError::Serialization(e.to_string()))
+    }
+
     fn base_scores(&self, text: &str) -> Vec<(ClassificationLabel, f32)> {
         core::base_scores(self, text)
     }

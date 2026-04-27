@@ -5,8 +5,37 @@ use crate::classifiers::knn::{euclidean_distance_squared, manhattan_distance, mi
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
-use crate::nlp::{dense_matrix_from_texts, FastTextConfigBuilder, NlpOption, WordEmbeddingModel};
+use crate::nlp::{dense_matrix_from_texts, DenseMatrix, FastTextConfigBuilder, NlpOption, WordEmbeddingModel};
 use crate::parallel::install_pool;
+
+/// Compute column-wise mean and std, normalise every row in place.
+/// Returns `(mean, std)` for use at inference time.
+pub(crate) fn apply_feature_normalization(matrix: &mut DenseMatrix) -> (Vec<f32>, Vec<f32>) {
+    let cols = matrix.shape()[1];
+    let rows = matrix.shape()[0].max(1);
+    let mut mean = vec![0.0f32; cols];
+    let mut std_vals = vec![1.0f32; cols];
+    for col in 0..cols {
+        let col_view = matrix.column(col);
+        mean[col] = col_view.iter().copied().sum::<f32>() / rows as f32;
+        let m = mean[col];
+        let var = col_view
+            .iter()
+            .map(|&v| (v - m) * (v - m))
+            .sum::<f32>()
+            / rows as f32;
+        std_vals[col] = var.sqrt().max(1e-6);
+    }
+    let mean_view = ndarray::ArrayView1::from(mean.as_slice());
+    let std_view = ndarray::ArrayView1::from(std_vals.as_slice());
+    for mut row in matrix.rows_mut() {
+        ndarray::Zip::from(&mut row)
+            .and(mean_view)
+            .and(std_view)
+            .for_each(|v, &m, &s| *v = (*v - m) / s);
+    }
+    (mean, std_vals)
+}
 
 pub(crate) fn train(
     samples: &[TrainingSample],
@@ -32,30 +61,12 @@ pub(crate) fn train(
     let mut matrix = match &model {
         DenseFeatureModel::Word2Vec(inner) => dense_matrix_from_texts(inner, &texts),
         DenseFeatureModel::FastText(inner) => dense_matrix_from_texts(inner, &texts),
+        // ExternalFastText is never constructed by this path — train_with_external_fasttext handles it
+        DenseFeatureModel::ExternalFastText { .. } => unreachable!("ExternalFastText not reachable from core::train"),
     };
 
     let (feature_mean, feature_std) = if normalize_features {
-        let cols = matrix.shape()[1];
-        let rows = matrix.shape()[0].max(1);
-        let mut mean = vec![0.0f32; cols];
-        let mut std  = vec![1.0f32; cols];
-        // Column-wise mean/std via ndarray column views (sequential access).
-        for col in 0..cols {
-            let col_view = matrix.column(col);
-            mean[col] = col_view.iter().copied().sum::<f32>() / rows as f32;
-            let m = mean[col];
-            let var = col_view.iter().map(|&v| (v - m) * (v - m)).sum::<f32>() / rows as f32;
-            std[col] = var.sqrt().max(1e-6);
-        }
-        // Normalise every row with ndarray Zip (SIMD element-wise).
-        let mean_view = ndarray::ArrayView1::from(mean.as_slice());
-        let std_view  = ndarray::ArrayView1::from(std.as_slice());
-        for mut row in matrix.rows_mut() {
-            ndarray::Zip::from(&mut row)
-                .and(mean_view)
-                .and(std_view)
-                .for_each(|v, &m, &s| *v = (*v - m) / s);
-        }
+        let (mean, std) = apply_feature_normalization(&mut matrix);
         (Some(mean), Some(std))
     } else {
         (None, None)

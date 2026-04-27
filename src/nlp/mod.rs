@@ -1,6 +1,9 @@
 pub mod normalizer;
 pub mod tokenizer;
 pub mod feature_extractor;
+pub mod fasttext_bin;
+
+pub use fasttext_bin::{FastTextBin, FastTextEmbeddings};
 
 pub use feature_extractor::{
     dense_matrix_from_texts, dense_matrix_from_texts_with_tfidf, fit_tfidf, fit_tfidf_with_config, transform_tfidf, DenseMatrix, FastTextConfig,

@@ -51,13 +51,17 @@ pub(crate) mod parallel;
 pub(crate) mod math;
 
 pub use classifier::{
-    BayesBuilder, ClassificationResult, Classifier, ClassifierBuilder, ClassifierFactory, ClassifierMethod,
-    DistanceMetric, EnsembleClassifier, ExplainableClassifier, KnnBuilder, MethodKind, TokenContribution,
+    BayesBuilder, BayesClassifier, ClassificationResult, Classifier, ClassifierBuilder,
+    ClassifierFactory, ClassifierMethod, DistanceMetric, EnsembleClassifier,
+    ExplainableClassifier, KnnBuilder, KnnClassifier, MethodKind, TokenContribution,
 };
 pub use advanced_models::{
     AdvancedClassifier, AdvancedModelConfig, GradientBoostingConfig, IsolationForestConfig,
     LogisticRegressionConfig, RandomForestConfig, RandomForestMaxFeatures, RandomForestMode,
     SvmConfig, SvmKernel,
+    // Standalone typed classifiers — same API as KnnClassifier / BayesClassifier
+    GradientBoostingClassifier, IsolationForestClassifier, LogisticClassifier,
+    RandomForestClassifier, SvmClassifier,
 };
 pub use config::{
     ExtraMatchConfig, ExtraMatchEngine, RecursiveMode, RulesFile, ScoreSumMode,
@@ -70,6 +74,7 @@ pub use matcher::{
     RuleSet, ScoringEngine,
 };
 pub use nlp::{FastTextConfig, FastTextConfigBuilder, NlpOption};
+pub use nlp::fasttext_bin::{FastTextBin, FastTextEmbeddings};
 pub use report::{ClassificationReport, ClassificationRecord};
 
 pub use dataset::read_text_file_limited;

@@ -31,7 +31,7 @@ Every public classifier type has all three format pairs:
 | `IsolationForestClassifier` | ✓ | ✓ | ✓ |
 | `AdvancedClassifier` | ✓ | ✓ | ✓ |
 
-`FastTextEmbeddings` (external embeddings loaded from a `.bin` file) can also be saved and loaded with `save_bincode` / `load_bincode`.
+`FastTextEmbeddings` and `Word2VecEmbeddings` (external embeddings extracted from a `.bin` file) can both be saved and loaded via `save_bincode` / `load_bincode`. The unified `ExternalEmbeddings` enum wraps both and is accepted by every classifier's `train_with_external_embeddings` method.
 
 ---
 
@@ -255,12 +255,18 @@ classifier.save_split_bincode("models/fraud.nlp.bin", "models/iforest.ml.bin")?;
 
 ---
 
-## External fastText embeddings — end-to-end workflow
+## External embeddings — end-to-end workflow
 
-This section walks through a complete pipeline:
+This section walks through complete pipelines using two types of external word vectors:
 
+- **fastText** (`.bin` from the `fasttext` CLI) — supports subword OOV composition
+- **word2vec** (`.bin` from the `word2vec` or `word2vec-c` tool) — uses vocabulary centroid for OOV
+
+Both are loaded into vec-eyes-lib's unified `ExternalEmbeddings` type and accepted by every classifier's `train_with_external_embeddings` method.
+
+Steps covered:
 1. Download a UCI text dataset
-2. Build a corpus file and train word vectors with the **system fastText CLI** (from `apt`)
+2. Build a corpus file and train word vectors with the **system CLI**
 3. Load the resulting `.bin` into vec-eyes-lib
 4. Train a classifier and persist it
 
@@ -321,7 +327,7 @@ The flags that matter for vec-eyes-lib compatibility:
 
 | Flag | Meaning |
 |---|---|
-| `-dim` | Vector dimensionality (matches `embedding_dims` you pass to `train_with_external_fasttext`) |
+| `-dim` | Vector dimensionality used by `train_with_external_embeddings` |
 | `-minn` / `-maxn` | Character n-gram range used for OOV subword composition |
 | `-minCount 1` | Include every word token; useful on small corpora |
 
@@ -330,7 +336,7 @@ The flags that matter for vec-eyes-lib compatibility:
 ```rust
 use std::path::Path;
 use vec_eyes_lib::{
-    ClassificationLabel, DistanceMetric, FastTextBin, KnnClassifier,
+    ClassificationLabel, DistanceMetric, ExternalEmbeddings, FastTextBin, KnnClassifier,
     dataset::load_training_samples,
 };
 
@@ -354,14 +360,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Extract only the vectors needed for this vocabulary.
     // Much smaller than extract_all() on large pre-trained models.
     let vocab: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
-    let embeddings = bin.extract_for_vocab(&vocab);
+    let ft_embeddings = bin.extract_for_vocab(&vocab);
+
+    // Wrap in the unified ExternalEmbeddings enum
+    let embeddings = ExternalEmbeddings::FastText(ft_embeddings);
 
     // Cache the extracted embeddings — subsequent runs skip the .bin parse
     embeddings.save_bincode("models/sms_ft.embeddings.bin")?;
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Train KNN using the external fastText embeddings
-    let classifier = KnnClassifier::train_with_external_fasttext(
+    // Train KNN using the external embeddings
+    let classifier = KnnClassifier::train_with_external_embeddings(
         &samples,
         embeddings,
         DistanceMetric::Cosine,
@@ -384,10 +393,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #### Fast path — reload without reparsing `.bin`
 
 ```rust
-use vec_eyes_lib::{FastTextEmbeddings, KnnClassifier};
+use vec_eyes_lib::{ExternalEmbeddings, KnnClassifier};
 
 // Skip the heavy .bin parse — load pre-extracted embeddings directly
-let embeddings = FastTextEmbeddings::load_bincode("models/sms_ft.embeddings.bin")?;
+let embeddings = ExternalEmbeddings::load_bincode("models/sms_ft.embeddings.bin")?;
 
 // If you already have a trained classifier, skip training too
 let classifier = KnnClassifier::load_bincode("models/sms_knn_ft.bin")?;
@@ -422,8 +431,8 @@ fasttext skipgram \
 ```rust
 use std::path::Path;
 use vec_eyes_lib::{
-    ClassificationLabel, FastTextBin, LogisticClassifier, LogisticRegressionConfig,
-    dataset::load_training_samples,
+    ClassificationLabel, ExternalEmbeddings, FastTextBin, LogisticClassifier,
+    LogisticRegressionConfig, dataset::load_training_samples,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -440,7 +449,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bin = FastTextBin::load("models/fraud_ft.bin")?;
     let vocab: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
-    let embeddings = bin.extract_for_vocab(&vocab);
+    let embeddings = ExternalEmbeddings::FastText(bin.extract_for_vocab(&vocab));
     embeddings.save_bincode("models/fraud_ft.embeddings.bin")?;
 
     let config = LogisticRegressionConfig {
@@ -450,12 +459,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Logistic regression with external fastText embeddings
-    let classifier = LogisticClassifier::train_with_external_fasttext(
+    let classifier = LogisticClassifier::train_with_external_embeddings(
         &samples,
         embeddings,
         config,
         /*threads=*/ None,
-        /*embedding_dims=*/ 64,
     )?;
 
     // Split save: NLP pipeline reusable by a second classifier head
@@ -501,8 +509,8 @@ fasttext skipgram \
 ```rust
 use std::path::Path;
 use vec_eyes_lib::{
-    ClassificationLabel, FastTextBin, IsolationForestClassifier, IsolationForestConfig,
-    dataset::load_training_samples,
+    ClassificationLabel, ExternalEmbeddings, FastTextBin, IsolationForestClassifier,
+    IsolationForestConfig, dataset::load_training_samples,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -519,7 +527,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bin = FastTextBin::load("models/bio_ft.bin")?;
     let vocab: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
-    let embeddings = bin.extract_for_vocab(&vocab);
+    let embeddings = ExternalEmbeddings::FastText(bin.extract_for_vocab(&vocab));
     embeddings.save_bincode("models/bio_ft.embeddings.bin")?;
 
     let config = IsolationForestConfig {
@@ -528,14 +536,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         subsample_size: 64,
     };
 
-    let classifier = IsolationForestClassifier::train_with_external_fasttext(
+    let classifier = IsolationForestClassifier::train_with_external_embeddings(
         &samples,
         embeddings,
         config,
         ClassificationLabel::Anomaly, // hot: exon-intron junctions (signal class)
         ClassificationLabel::RawData, // cold: non-junctions (background)
         /*threads=*/ None,
-        /*embedding_dims=*/ 32,
     )?;
 
     classifier.save_bincode("models/bio_iforest.bin")?;
@@ -560,7 +567,7 @@ gunzip cc.en.300.bin.gz
 ```
 
 ```rust
-use vec_eyes_lib::{FastTextBin, FastTextEmbeddings, KnnClassifier, DistanceMetric};
+use vec_eyes_lib::{ExternalEmbeddings, FastTextBin, KnnClassifier, DistanceMetric};
 
 // ── One-time extraction (run this once, then use the cached embeddings) ────────
 
@@ -569,16 +576,16 @@ let bin = FastTextBin::load("cc.en.300.bin")?;
 // extract_for_vocab reads only the vectors your data actually needs.
 // For a 5 000-sample corpus this produces a few MB instead of 4 GB.
 let vocab: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
-let embeddings = bin.extract_for_vocab(&vocab);
+let embeddings = ExternalEmbeddings::FastText(bin.extract_for_vocab(&vocab));
 drop(bin); // release the 4 GB matrix
 
 embeddings.save_bincode("models/cc300.embeddings.bin")?;
 
 // ── Every subsequent run ───────────────────────────────────────────────────────
 
-let embeddings = FastTextEmbeddings::load_bincode("models/cc300.embeddings.bin")?;
+let embeddings = ExternalEmbeddings::load_bincode("models/cc300.embeddings.bin")?;
 
-let classifier = KnnClassifier::train_with_external_fasttext(
+let classifier = KnnClassifier::train_with_external_embeddings(
     &samples,
     embeddings,
     DistanceMetric::Cosine,
@@ -591,6 +598,244 @@ classifier.save_bincode("models/cc300_knn.bin")?;
 ```
 
 OOV words (tokens not in the Common Crawl vocabulary) are automatically handled via subword composition: vec-eyes-lib computes character n-gram hashes using the same FNV-1a algorithm as fastText C++, then averages the corresponding bucket vectors from the `.bin` file.
+
+---
+
+## External word2vec embeddings — end-to-end workflow
+
+The Google word2vec binary format (`.bin`) produced by both the original `word2vec` C tool and its Rust/Python reimplementations is supported via `Word2VecBin`. Unlike fastText, word2vec has no subword model; out-of-vocabulary tokens fall back to the **vocabulary centroid** (mean of all word vectors).
+
+### Step 0 — install word2vec CLI
+
+```bash
+sudo apt install word2vec   # Ubuntu/Debian
+# or build from source: https://github.com/dav/word2vec
+word2vec 2>&1 | head -1     # Starting training using file ...
+```
+
+---
+
+### Example 4 — UCI News Category (word2vec + KNN Euclidean)
+
+**Dataset**: [News Category Dataset](https://archive.ics.uci.edu/dataset/557/news+aggregator+dataset)  
+Articles from Reuters with category labels: `b` (business), `t` (technology), `e` (entertainment), `m` (health).
+
+```bash
+# Download
+wget -q "https://archive.ics.uci.edu/static/public/557/news+aggregator+dataset.zip" \
+     -O news.zip
+unzip -o news.zip -d news_raw
+
+# newsCorpora.csv columns: ID, TITLE, URL, PUBLISHER, CATEGORY, ...
+# Extract "business" vs all-others
+mkdir -p data/news/hot data/news/cold corpus/news
+awk -F'\t' 'NR>1 && $5=="b" {print $2 > "data/news/hot/b_" NR ".txt"}' \
+    news_raw/newsCorpora.csv
+awk -F'\t' 'NR>1 && $5!="b" {print $2 > "data/news/cold/o_" NR ".txt"}' \
+    news_raw/newsCorpora.csv
+
+# Build corpus and train word2vec
+cut -f2 news_raw/newsCorpora.csv | tail -n +2 > corpus/news/titles.txt
+
+word2vec \
+    -train  corpus/news/titles.txt \
+    -output models/news_w2v.bin     \
+    -binary 1                       \
+    -size   100                     \
+    -window 5                       \
+    -min-count 2                    \
+    -iter   10
+```
+
+```rust
+use std::path::Path;
+use vec_eyes_lib::{
+    ClassificationLabel, DistanceMetric, ExternalEmbeddings,
+    Word2VecBin, KnnClassifier, dataset::load_training_samples,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut samples = load_training_samples(
+        Path::new("data/news/hot"),
+        ClassificationLabel::WebAttack, // "hot" label — business articles
+        false,
+    )?;
+    samples.extend(load_training_samples(
+        Path::new("data/news/cold"),
+        ClassificationLabel::RawData,
+        false,
+    )?);
+
+    // ── One-time: parse word2vec .bin and extract vocabulary vectors ──────────
+    let bin = Word2VecBin::load("models/news_w2v.bin")?;
+    let vocab: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
+    let w2v_embeddings = bin.extract_for_vocab(&vocab);
+
+    // Wrap in unified ExternalEmbeddings and cache
+    let embeddings = ExternalEmbeddings::Word2Vec(w2v_embeddings);
+    embeddings.save_bincode("models/news_w2v.embeddings.bin")?;
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // KNN with Euclidean distance using word2vec features
+    let classifier = KnnClassifier::train_with_external_embeddings(
+        &samples,
+        embeddings,
+        DistanceMetric::Euclidean,
+        /*k=*/ 7,
+        /*threads=*/ None,
+        /*normalize_features=*/ true,
+    )?;
+
+    classifier.save_bincode("models/news_knn_w2v.bin")?;
+
+    let result = classifier.classify("Fed raises interest rates amid inflation concerns")?;
+    println!("label: {:?}  confidence: {:.2}", result.label, result.score);
+
+    Ok(())
+}
+```
+
+#### Reload path (skip `.bin` reparsing)
+
+```rust
+use vec_eyes_lib::{ExternalEmbeddings, KnnClassifier};
+
+let embeddings = ExternalEmbeddings::load_bincode("models/news_w2v.embeddings.bin")?;
+let classifier = KnnClassifier::load_bincode("models/news_knn_w2v.bin")?;
+```
+
+---
+
+### Example 5 — UCI SMS Spam (word2vec + Random Forest)
+
+Same SMS Spam dataset as Example 1, but using word2vec vectors and a Random Forest classifier instead of KNN.
+
+```bash
+# Reuse corpus built in Example 1:  corpus/sms_corpus.txt
+word2vec \
+    -train  corpus/sms_corpus.txt \
+    -output models/sms_w2v.bin    \
+    -binary 1                     \
+    -size   64                    \
+    -window 3                     \
+    -min-count 1                  \
+    -iter   15
+```
+
+```rust
+use std::path::Path;
+use vec_eyes_lib::{
+    ClassificationLabel, ExternalEmbeddings, RandomForestClassifier, RandomForestConfig,
+    Word2VecBin, dataset::load_training_samples,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut samples = load_training_samples(
+        Path::new("data/sms/hot"),
+        ClassificationLabel::Spam,
+        false,
+    )?;
+    samples.extend(load_training_samples(
+        Path::new("data/sms/cold"),
+        ClassificationLabel::RawData,
+        false,
+    )?);
+
+    let bin = Word2VecBin::load("models/sms_w2v.bin")?;
+    let vocab: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
+    let embeddings = ExternalEmbeddings::Word2Vec(bin.extract_for_vocab(&vocab));
+    embeddings.save_bincode("models/sms_w2v.embeddings.bin")?;
+
+    let config = RandomForestConfig {
+        n_trees: 150,
+        max_depth: Some(12),
+        ..Default::default()
+    };
+
+    // Random Forest with word2vec features
+    let classifier = RandomForestClassifier::train_with_external_embeddings(
+        &samples,
+        embeddings,
+        config,
+        /*threads=*/ None,
+    )?;
+
+    classifier.save_bincode("models/sms_rf_w2v.bin")?;
+
+    for text in &[
+        "Congratulations! You have won a FREE iPhone",
+        "Can we schedule a meeting for Tuesday?",
+    ] {
+        let r = classifier.classify(text)?;
+        println!("{:<50}  {:?}  ({:.2})", text, r.label, r.score);
+    }
+
+    Ok(())
+}
+```
+
+---
+
+### Example 6 — UCI Fraud (word2vec + SVM)
+
+```bash
+# Reuse corpus from Example 2: corpus/fraud_corpus.txt
+word2vec \
+    -train  corpus/fraud_corpus.txt \
+    -output models/fraud_w2v.bin    \
+    -binary 1                       \
+    -size   64                      \
+    -window 5                       \
+    -min-count 1                    \
+    -iter   20
+```
+
+```rust
+use std::path::Path;
+use vec_eyes_lib::{
+    ClassificationLabel, ExternalEmbeddings, SvmClassifier, SvmConfig, SvmKernel,
+    Word2VecBin, dataset::load_training_samples,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut samples = load_training_samples(
+        Path::new("data/fraud/hot"),
+        ClassificationLabel::Anomaly,
+        false,
+    )?;
+    samples.extend(load_training_samples(
+        Path::new("data/fraud/cold"),
+        ClassificationLabel::RawData,
+        false,
+    )?);
+
+    let bin = Word2VecBin::load("models/fraud_w2v.bin")?;
+    let vocab: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
+    let embeddings = ExternalEmbeddings::Word2Vec(bin.extract_for_vocab(&vocab));
+    embeddings.save_bincode("models/fraud_w2v.embeddings.bin")?;
+
+    let config = SvmConfig {
+        kernel: SvmKernel::Linear,
+        c: 1.0,
+        ..Default::default()
+    };
+
+    // SVM with word2vec features
+    let classifier = SvmClassifier::train_with_external_embeddings(
+        &samples,
+        embeddings,
+        config,
+        /*threads=*/ None,
+    )?;
+
+    classifier.save_bincode("models/fraud_svm_w2v.bin")?;
+
+    let result = classifier.classify("suspicious wire transfer to unknown offshore account")?;
+    println!("label: {:?}  score: {:.3}", result.label, result.score);
+
+    Ok(())
+}
+```
 
 ---
 
@@ -612,7 +857,7 @@ OOV words (tokens not in the Common Crawl vocabulary) are automatically handled 
 | Debugging a model, inspecting weights | JSON |
 | Production service, reload on start | bincode single file |
 | Large embedding model (Word2Vec / FastText) shared across pipelines | Split bincode — write NLP once, update ML head separately |
-| External fastText with millions of buckets | `FastTextEmbeddings::save_bincode` → reload and pass to `train_with_external_fasttext` |
+| External fastText or word2vec embeddings | `ExternalEmbeddings::save_bincode` → reload and pass to `train_with_external_embeddings` |
 
 ---
 

@@ -76,13 +76,8 @@ fn read_floats(r: &mut impl Read, buf: &mut [f32]) -> Result<(), VecEyesError> {
     while offset < buf.len() {
         let n = (buf.len() - offset).min(CHUNK);
         r.read_exact(&mut tmp[..n * 4])?;
-        for i in 0..n {
-            buf[offset + i] = f32::from_le_bytes([
-                tmp[i * 4],
-                tmp[i * 4 + 1],
-                tmp[i * 4 + 2],
-                tmp[i * 4 + 3],
-            ]);
+        for (dst, src) in buf[offset..offset + n].iter_mut().zip(tmp[..n * 4].chunks_exact(4)) {
+            *dst = f32::from_le_bytes(src.try_into().unwrap());
         }
         offset += n;
     }
@@ -181,15 +176,27 @@ fn compute_centroid(word_vectors: &HashMap<String, Vec<f32>>, dims: usize) -> Ve
     if word_vectors.is_empty() {
         return vec![0.0f32; dims];
     }
-    let mut centroid = vec![0.0f32; dims];
-    for vec in word_vectors.values() {
-        for (i, &v) in vec.iter().enumerate().take(dims) {
-            centroid[i] += v;
-        }
-    }
-    let n = word_vectors.len() as f32;
-    centroid.iter_mut().for_each(|v| *v /= n);
-    centroid
+    use rayon::prelude::*;
+    let vecs: Vec<&Vec<f32>> = word_vectors.values().collect();
+    let mut sum = vecs
+        .par_iter()
+        .fold(
+            || vec![0.0f32; dims],
+            |mut acc, v| {
+                acc.iter_mut().zip(v.iter()).for_each(|(a, &b)| *a += b);
+                acc
+            },
+        )
+        .reduce(
+            || vec![0.0f32; dims],
+            |mut a, b| {
+                a.iter_mut().zip(b.iter()).for_each(|(x, &y)| *x += y);
+                a
+            },
+        );
+    let inv = 1.0 / word_vectors.len() as f32;
+    sum.iter_mut().for_each(|v| *v *= inv);
+    sum
 }
 
 // ── Word2VecEmbeddings ────────────────────────────────────────────────────────
@@ -249,34 +256,41 @@ pub fn embed_texts<S: AsRef<str>>(
     texts: &[S],
     idf: Option<&TfIdfModel>,
 ) -> DenseMatrix {
-    let rows = texts.len();
+    use rayon::prelude::*;
+
     let cols = embeddings.dims;
-    let mut matrix = ndarray::Array2::<f32>::zeros((rows, cols));
-    for (row, text) in texts.iter().enumerate() {
-        let normalized = crate::nlp::normalize_text(text.as_ref());
-        let tokens = crate::nlp::tokenize(&normalized);
-        if tokens.is_empty() {
-            continue;
-        }
-        let mut row_vec = vec![0f32; cols];
-        let mut total_weight = 0f32;
-        for token in &tokens {
-            let weight = idf
-                .and_then(|m| m.token_to_index.get(token).map(|&i| m.idf[i]))
-                .unwrap_or(1.0);
-            // vector_for always returns a slice (centroid for OOV).
-            let vec = embeddings.vector_for(token);
-            for (i, &v) in vec.iter().enumerate().take(cols) {
-                row_vec[i] += v * weight;
+    // Collect to &str so rayon gets a Sync slice regardless of S.
+    let refs: Vec<&str> = texts.iter().map(|s| s.as_ref()).collect();
+    let mut matrix = ndarray::Array2::<f32>::zeros((refs.len(), cols));
+
+    matrix
+        .axis_iter_mut(ndarray::Axis(0))
+        .into_par_iter()
+        .zip(refs.par_iter())
+        .for_each(|(mut row, &text)| {
+            let normalized = crate::nlp::normalize_text(text);
+            let tokens = crate::nlp::tokenize(&normalized);
+            if tokens.is_empty() {
+                return;
             }
-            total_weight += weight;
-        }
-        if total_weight > 0.0 {
-            let inv = 1.0 / total_weight;
-            for (col, &v) in row_vec.iter().enumerate() {
-                matrix[[row, col]] = v * inv;
+            let mut acc = vec![0f32; cols];
+            let mut total_weight = 0f32;
+            for token in &tokens {
+                let weight = idf
+                    .and_then(|m| m.token_to_index.get(token).map(|&i| m.idf[i]))
+                    .unwrap_or(1.0);
+                // vector_for always returns a slice (centroid for OOV).
+                let vec = embeddings.vector_for(token);
+                acc.iter_mut()
+                    .zip(vec.iter().take(cols))
+                    .for_each(|(a, &b)| *a += b * weight);
+                total_weight += weight;
             }
-        }
-    }
+            if total_weight > 0.0 {
+                let inv = 1.0 / total_weight;
+                row.iter_mut().zip(acc.iter()).for_each(|(dst, &src)| *dst = src * inv);
+            }
+        });
+
     matrix
 }

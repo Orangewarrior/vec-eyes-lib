@@ -55,13 +55,8 @@ fn read_f32_chunk(r: &mut impl Read, buf: &mut [f32]) -> Result<(), VecEyesError
     while offset < buf.len() {
         let n = (buf.len() - offset).min(CHUNK);
         r.read_exact(&mut tmp[..n * 4])?;
-        for i in 0..n {
-            buf[offset + i] = f32::from_le_bytes([
-                tmp[i * 4],
-                tmp[i * 4 + 1],
-                tmp[i * 4 + 2],
-                tmp[i * 4 + 3],
-            ]);
+        for (dst, src) in buf[offset..offset + n].iter_mut().zip(tmp[..n * 4].chunks_exact(4)) {
+            *dst = f32::from_le_bytes(src.try_into().unwrap());
         }
         offset += n;
     }
@@ -372,19 +367,17 @@ impl FastTextEmbeddings {
         for h in hashes {
             let bi = h - self.nwords;
             if let Some(bv) = self.bucket_vectors.get(&bi) {
-                for (i, &v) in bv.iter().enumerate().take(self.dims) {
-                    vec[i] += v;
-                }
+                vec.iter_mut()
+                    .zip(bv.iter().take(self.dims))
+                    .for_each(|(a, &b)| *a += b);
                 count += 1;
             }
         }
         if count == 0 {
             return None;
         }
-        let n = count as f32;
-        for v in &mut vec {
-            *v /= n;
-        }
+        let inv = 1.0 / count as f32;
+        vec.iter_mut().for_each(|v| *v *= inv);
         Some(vec)
     }
 
@@ -426,33 +419,41 @@ pub fn embed_texts<S: AsRef<str>>(
     texts: &[S],
     idf: Option<&TfIdfModel>,
 ) -> DenseMatrix {
-    let rows = texts.len();
+    use rayon::prelude::*;
+
     let cols = embeddings.dims;
-    let mut matrix = ndarray::Array2::<f32>::zeros((rows, cols));
-    for (row, text) in texts.iter().enumerate() {
-        let normalized = crate::nlp::normalize_text(text.as_ref());
-        let tokens = crate::nlp::tokenize(&normalized);
-        if tokens.is_empty() {
-            continue;
-        }
-        let mut row_vec = vec![0f32; cols];
-        let mut total_weight = 0f32;
-        for token in &tokens {
-            let weight = idf
-                .and_then(|m| m.token_to_index.get(token).map(|&i| m.idf[i]))
-                .unwrap_or(1.0);
-            if let Some(vec) = embeddings.vector_for(token) {
-                for (i, &v) in vec.iter().enumerate().take(cols) {
-                    row_vec[i] += v * weight;
+    // Collect to &str so rayon gets a Sync slice regardless of S.
+    let refs: Vec<&str> = texts.iter().map(|s| s.as_ref()).collect();
+    let mut matrix = ndarray::Array2::<f32>::zeros((refs.len(), cols));
+
+    matrix
+        .axis_iter_mut(ndarray::Axis(0))
+        .into_par_iter()
+        .zip(refs.par_iter())
+        .for_each(|(mut row, &text)| {
+            let normalized = crate::nlp::normalize_text(text);
+            let tokens = crate::nlp::tokenize(&normalized);
+            if tokens.is_empty() {
+                return;
+            }
+            let mut acc = vec![0f32; cols];
+            let mut total_weight = 0f32;
+            for token in &tokens {
+                let weight = idf
+                    .and_then(|m| m.token_to_index.get(token).map(|&i| m.idf[i]))
+                    .unwrap_or(1.0);
+                if let Some(vec) = embeddings.vector_for(token) {
+                    acc.iter_mut()
+                        .zip(vec.iter().take(cols))
+                        .for_each(|(a, &b)| *a += b * weight);
+                    total_weight += weight;
                 }
-                total_weight += weight;
             }
-        }
-        if total_weight > 0.0 {
-            for (col, &v) in row_vec.iter().enumerate() {
-                matrix[[row, col]] = v / total_weight;
+            if total_weight > 0.0 {
+                let inv = 1.0 / total_weight;
+                row.iter_mut().zip(acc.iter()).for_each(|(dst, &src)| *dst = src * inv);
             }
-        }
-    }
+        });
+
     matrix
 }

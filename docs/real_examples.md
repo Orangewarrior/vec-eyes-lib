@@ -1,14 +1,25 @@
 # Real Classification Examples
 
-Three self-contained projects that download a public UCI dataset, train a
-different classifier from vec-eyes-lib, persist the model to disk, and classify
-new inputs — from scratch to `cargo run`.
+Self-contained projects that download a public UCI dataset, train a classifier
+from vec-eyes-lib, persist the model to disk, and classify new inputs — from
+scratch to `cargo run`.
+
+## Internal NLP pipeline (built-in embeddings)
 
 | # | Domain | UCI Dataset | Classifier | NLP |
 |---|---|---|---|---|
 | 1 | Security | SMS Spam Collection | KNN (Euclidean) | Word2Vec |
 | 2 | Biology | Molecular Biology Splice-junction | Naive Bayes | TF-IDF |
 | 3 | Finance | Sentiment Labelled Sentences | Logistic Regression + Random Forest | Word2Vec / TF-IDF |
+
+## External embeddings (fastText / word2vec `.bin`)
+
+| # | Domain | UCI Dataset | Classifier | External NLP |
+|---|---|---|---|---|
+| 4 | Security | SMS Spam Collection | KNN (Cosine) | fastText |
+| 5 | Finance | News Category Dataset | Random Forest | word2vec |
+| 6 | Biology | Splice-junction Gene Sequences | SVM (Linear) | word2vec |
+| 7 | Security | SMS Spam (multi-classifier comparison) | KNN + LR + RF + Bayes | fastText + word2vec |
 
 ---
 
@@ -851,6 +862,462 @@ URGENT verify your bank details or account   Spam      Spam      Spam         Sp
 Can we reschedule the call for next week     Ham       Ham       Ham          Ham
 Claim 500 cash reward expires tonight        Spam      Spam      Spam         Spam
 Team lunch is booked for Thursday at noon    Ham       Ham       Ham          Ham
+```
+
+---
+
+## Example 4 — Security: SMS Spam with External fastText (KNN Cosine)
+
+**Classifier**: K-Nearest Neighbours, Cosine distance, external fastText embeddings  
+**Dataset**: [UCI SMS Spam Collection #228](https://archive.ics.uci.edu/dataset/228/sms+spam+collection)  
+**External NLP**: fastText CLI (from `apt`), 100-dimensional skip-gram vectors
+
+This example shows the full workflow: download → prepare corpus → train fastText → load in vec-eyes-lib → train classifier → classify.
+
+### Project layout
+
+```
+workspace/
+├── vec-eyes-lib/
+└── security-ft/
+    ├── Cargo.toml
+    ├── src/main.rs
+    ├── data/sms/hot/        ← one .txt per spam message
+    ├── data/sms/cold/       ← one .txt per ham message
+    ├── corpus/sms.txt       ← full corpus for fastText training
+    └── models/              ← .bin outputs
+```
+
+### Cargo.toml
+
+```toml
+[package]
+name    = "security-ft"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "train"
+path = "src/main.rs"
+
+[dependencies]
+vec-eyes-lib = { path = "../vec-eyes-lib" }
+```
+
+### Dataset preparation
+
+```bash
+# Install fastText
+sudo apt install fasttext
+
+# Download and unpack
+wget -q "https://archive.ics.uci.edu/static/public/228/sms+spam+collection.zip" \
+     -O sms_spam.zip
+unzip -o sms_spam.zip -d sms_spam_raw
+
+# Split into hot/cold directories
+mkdir -p data/sms/hot data/sms/cold corpus models
+awk -F'\t' '$1=="spam" {print $2 > "data/sms/hot/spam_" NR ".txt"}' \
+    sms_spam_raw/SMSSpamCollection
+awk -F'\t' '$1=="ham"  {print $2 > "data/sms/cold/ham_"  NR ".txt"}' \
+    sms_spam_raw/SMSSpamCollection
+
+# Build corpus for fastText
+cut -f2 sms_spam_raw/SMSSpamCollection > corpus/sms.txt
+
+# Train fastText skip-gram model
+fasttext skipgram \
+    -input  corpus/sms.txt \
+    -output models/sms_ft  \
+    -dim    100 -epoch 10 -minCount 1 -minn 3 -maxn 6
+```
+
+### src/main.rs
+
+```rust
+use std::path::Path;
+use vec_eyes_lib::{
+    ClassificationLabel, DistanceMetric, ExternalEmbeddings, FastTextBin, KnnClassifier,
+    dataset::load_training_samples,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut samples = load_training_samples(
+        Path::new("data/sms/hot"), ClassificationLabel::Spam, false,
+    )?;
+    samples.extend(load_training_samples(
+        Path::new("data/sms/cold"), ClassificationLabel::RawData, false,
+    )?);
+    println!("Loaded {} samples", samples.len());
+
+    // Parse fastText binary and extract vocabulary vectors
+    let bin = FastTextBin::load("models/sms_ft.bin")?;
+    let vocab: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
+    let embeddings = ExternalEmbeddings::FastText(bin.extract_for_vocab(&vocab));
+    drop(bin); // free the full model matrix
+
+    // Cache for subsequent runs
+    embeddings.save_bincode("models/sms_ft.embeddings.bin")?;
+
+    let classifier = KnnClassifier::train_with_external_embeddings(
+        &samples,
+        embeddings,
+        DistanceMetric::Cosine,
+        /*k=*/ 5,
+        /*threads=*/ None,
+        /*normalize_features=*/ false,
+    )?;
+    classifier.save_bincode("models/sms_knn_ft.bin")?;
+    println!("Model saved to models/sms_knn_ft.bin");
+
+    // Classify test messages
+    let tests = [
+        "FREE entry to win a prize call now",
+        "Can you pick up the kids from school?",
+        "URGENT: your account has been compromised",
+        "Looking forward to seeing you on Friday",
+    ];
+    println!("\n{:<50} {}", "Text", "Label");
+    println!("{}", "-".repeat(60));
+    for text in &tests {
+        let r = classifier.classify(text)?;
+        println!("{:<50} {:?} ({:.2})", text, r.label, r.score);
+    }
+
+    Ok(())
+}
+```
+
+### Build and run
+
+```bash
+cargo build --release
+cargo run --release
+```
+
+Expected output:
+
+```
+Loaded 5574 samples
+Model saved to models/sms_knn_ft.bin
+
+Text                                               Label
+------------------------------------------------------------
+FREE entry to win a prize call now                 Spam (0.94)
+Can you pick up the kids from school?              RawData (0.89)
+URGENT: your account has been compromised          Spam (0.91)
+Looking forward to seeing you on Friday            RawData (0.87)
+```
+
+---
+
+## Example 5 — Finance: News Category with word2vec + Random Forest
+
+**Classifier**: Random Forest  
+**Dataset**: [UCI News Category Dataset](https://archive.ics.uci.edu/dataset/557/news+aggregator+dataset)  
+**External NLP**: word2vec CLI (from `apt`), 100-dimensional CBOW vectors
+
+### Dataset preparation
+
+```bash
+sudo apt install word2vec
+
+wget -q "https://archive.ics.uci.edu/static/public/557/news+aggregator+dataset.zip" \
+     -O news.zip
+unzip -o news.zip -d news_raw
+
+# newsCorpora.csv: ID<TAB>TITLE<TAB>URL<TAB>PUBLISHER<TAB>CATEGORY<TAB>...
+# CATEGORY: b=business, t=technology, e=entertainment, m=health
+mkdir -p data/news/hot data/news/cold corpus/news models
+
+# hot = business, cold = everything else (sample to balance)
+awk -F'\t' 'NR>1 && $5=="b" {print $2 > "data/news/hot/b_" NR ".txt"}' \
+    news_raw/newsCorpora.csv
+awk -F'\t' 'NR>1 && $5!="b" {print $2 > "data/news/cold/o_" NR ".txt"}' \
+    news_raw/newsCorpora.csv
+
+# Build corpus
+cut -f2 news_raw/newsCorpora.csv | tail -n +2 > corpus/news/titles.txt
+
+# Train word2vec CBOW
+word2vec \
+    -train   corpus/news/titles.txt \
+    -output  models/news_w2v.bin    \
+    -binary  1                      \
+    -cbow    1                      \
+    -size    100                    \
+    -window  5                      \
+    -min-count 2                    \
+    -iter    10
+```
+
+### src/main.rs
+
+```rust
+use std::path::Path;
+use vec_eyes_lib::{
+    ClassificationLabel, ExternalEmbeddings, RandomForestClassifier, RandomForestConfig,
+    Word2VecBin, dataset::load_training_samples,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut samples = load_training_samples(
+        Path::new("data/news/hot"), ClassificationLabel::WebAttack, false,
+    )?;
+    samples.extend(load_training_samples(
+        Path::new("data/news/cold"), ClassificationLabel::RawData, false,
+    )?);
+    println!("Loaded {} samples", samples.len());
+
+    // Parse word2vec binary — OOV tokens fall back to the vocabulary centroid
+    let bin = Word2VecBin::load("models/news_w2v.bin")?;
+    let vocab: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
+    let embeddings = ExternalEmbeddings::Word2Vec(bin.extract_for_vocab(&vocab));
+    drop(bin);
+
+    embeddings.save_bincode("models/news_w2v.embeddings.bin")?;
+
+    let config = RandomForestConfig {
+        n_trees: 150,
+        max_depth: 12,
+        ..Default::default()
+    };
+
+    let classifier = RandomForestClassifier::train_with_external_embeddings(
+        &samples,
+        embeddings,
+        config,
+        /*threads=*/ None,
+    )?;
+    classifier.save_bincode("models/news_rf_w2v.bin")?;
+    println!("Model saved to models/news_rf_w2v.bin");
+
+    let tests = [
+        "Federal Reserve raises interest rates to combat inflation",
+        "Apple unveils new chip architecture for MacBook Pro",
+        "Scientists discover new species in the Amazon",
+        "Stock market rallies on strong earnings reports",
+    ];
+    println!("\n{:<55} {}", "Headline", "Class");
+    println!("{}", "-".repeat(70));
+    for text in &tests {
+        let r = classifier.classify(text)?;
+        let label = match &r.label {
+            l if format!("{l:?}").contains("WebAttack") => "business",
+            _ => "other",
+        };
+        println!("{:<55} {} ({:.2})", text, label, r.score);
+    }
+
+    Ok(())
+}
+```
+
+---
+
+## Example 6 — Biology: Splice-junction Sequences with word2vec + SVM
+
+**Classifier**: SVM (Linear kernel)  
+**Dataset**: [Molecular Biology Splice-junction](https://archive.ics.uci.edu/dataset/69/molecular+biology+splice+junction+gene+sequences)  
+**External NLP**: word2vec CBOW, treating dinucleotide k-mers as "words"
+
+### Dataset preparation
+
+```bash
+wget -q "https://archive.ics.uci.edu/static/public/69/molecular+biology+splice+junction+gene+sequences.zip" \
+     -O splice.zip
+unzip -o splice.zip -d splice_raw
+
+# splice.data: class, instance, sequence (comma-separated)
+mkdir -p data/splice/hot data/splice/cold corpus/splice models
+
+awk -F', ' '$1=="EI" {print $3 > "data/splice/hot/ei_" NR ".txt"}' splice_raw/splice.data
+awk -F', ' '$1!="EI" {print $3 > "data/splice/cold/neg_" NR ".txt"}' splice_raw/splice.data
+
+# Convert each 60-char sequence into space-separated dinucleotides for word2vec
+python3 -c "
+import os, re
+for d in ['data/splice/hot', 'data/splice/cold']:
+    for f in os.listdir(d):
+        seq = open(os.path.join(d, f)).read().strip()
+        dinucs = ' '.join(seq[i:i+2] for i in range(len(seq)-1))
+        with open(os.path.join(d, f), 'w') as fh:
+            fh.write(dinucs)
+"
+
+# Build corpus from dinucleotide sequences
+find data/splice -name '*.txt' -exec cat {} \; > corpus/splice/dinucs.txt
+
+word2vec \
+    -train   corpus/splice/dinucs.txt \
+    -output  models/splice_w2v.bin    \
+    -binary  1                        \
+    -cbow    1                        \
+    -size    32                       \
+    -window  3                        \
+    -min-count 1                      \
+    -iter    20
+```
+
+### src/main.rs
+
+```rust
+use std::path::Path;
+use vec_eyes_lib::{
+    ClassificationLabel, ExternalEmbeddings, SvmClassifier, SvmConfig, SvmKernel,
+    Word2VecBin, dataset::load_training_samples,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut samples = load_training_samples(
+        Path::new("data/splice/hot"), ClassificationLabel::Anomaly, false,
+    )?;
+    samples.extend(load_training_samples(
+        Path::new("data/splice/cold"), ClassificationLabel::RawData, false,
+    )?);
+    println!("Loaded {} samples", samples.len());
+
+    let bin = Word2VecBin::load("models/splice_w2v.bin")?;
+    let vocab: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
+    let embeddings = ExternalEmbeddings::Word2Vec(bin.extract_for_vocab(&vocab));
+    drop(bin);
+    embeddings.save_bincode("models/splice_w2v.embeddings.bin")?;
+
+    let config = SvmConfig {
+        kernel: SvmKernel::Linear,
+        c: 1.0,
+        ..Default::default()
+    };
+
+    let classifier = SvmClassifier::train_with_external_embeddings(
+        &samples,
+        embeddings,
+        config,
+        /*threads=*/ None,
+    )?;
+    classifier.save_bincode("models/splice_svm_w2v.bin")?;
+    println!("Model saved");
+
+    let tests = [
+        "AG GT AA GC AT TC CG GG AT TT",  // dinucleotide sequence
+        "AA TT CC GG AA TT CC GG AA TT",
+    ];
+    for text in &tests {
+        let r = classifier.classify(text)?;
+        println!("seq: {}  →  {:?} ({:.2})", text, r.label, r.score);
+    }
+
+    Ok(())
+}
+```
+
+---
+
+## Example 7 — Security: Multi-classifier Comparison (fastText + word2vec)
+
+This example trains four classifiers on the same SMS Spam data — two with fastText embeddings, two with word2vec — and compares their predictions side by side.
+
+```rust
+use std::path::Path;
+use vec_eyes_lib::{
+    ClassificationLabel, DistanceMetric, ExternalEmbeddings,
+    FastTextBin, Word2VecBin,
+    KnnClassifier, LogisticClassifier, LogisticRegressionConfig,
+    RandomForestClassifier, RandomForestConfig,
+    dataset::load_training_samples,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // ── Load training data ────────────────────────────────────────────────────
+    let mut samples = load_training_samples(
+        Path::new("data/sms/hot"), ClassificationLabel::Spam, false,
+    )?;
+    samples.extend(load_training_samples(
+        Path::new("data/sms/cold"), ClassificationLabel::RawData, false,
+    )?);
+    println!("Loaded {} samples", samples.len());
+
+    let vocab: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
+
+    // ── Extract embeddings ────────────────────────────────────────────────────
+    let ft_bin = FastTextBin::load("models/sms_ft.bin")?;
+    let ft_emb = ExternalEmbeddings::FastText(ft_bin.extract_for_vocab(&vocab));
+    drop(ft_bin);
+
+    let w2v_bin = Word2VecBin::load("models/sms_w2v.bin")?;
+    let w2v_emb = ExternalEmbeddings::Word2Vec(w2v_bin.extract_for_vocab(&vocab));
+    drop(w2v_bin);
+
+    // ── Train classifiers ─────────────────────────────────────────────────────
+
+    // KNN with fastText (cosine)
+    let knn_ft = KnnClassifier::train_with_external_embeddings(
+        &samples, ft_emb.clone(), DistanceMetric::Cosine, 5, None, false,
+    )?;
+
+    // Logistic with fastText
+    let lr_ft = LogisticClassifier::train_with_external_embeddings(
+        &samples,
+        ft_emb,
+        LogisticRegressionConfig { learning_rate: 0.1, epochs: 200, lambda: 1e-3 },
+        None,
+    )?;
+
+    // Random Forest with word2vec
+    let rf_w2v = RandomForestClassifier::train_with_external_embeddings(
+        &samples,
+        w2v_emb.clone(),
+        RandomForestConfig { n_trees: 100, max_depth: 10, ..Default::default() },
+        None,
+    )?;
+
+    // KNN with word2vec (euclidean)
+    let knn_w2v = KnnClassifier::train_with_external_embeddings(
+        &samples, w2v_emb, DistanceMetric::Euclidean, 7, None, true,
+    )?;
+
+    // ── Compare predictions ───────────────────────────────────────────────────
+    let tests = [
+        "WINNER!! Claim your FREE iPhone now, call 08001234567",
+        "Are you coming to dinner tonight?",
+        "Your account may have been hacked, click link to verify",
+        "See you at the gym tomorrow morning",
+    ];
+
+    println!("\n{:<45} {:<14} {:<12} {:<12} {}", "Text", "KNN(FT)", "LR(FT)", "RF(W2V)", "KNN(W2V)");
+    println!("{}", "-".repeat(90));
+
+    for text in &tests {
+        let label = |r: vec_eyes_lib::ClassificationResult| match r.top_label() {
+            Some(ClassificationLabel::Spam) => "Spam",
+            _ => "Ham",
+        };
+        let knn_ft_l  = label(knn_ft.classify(text)?);
+        let lr_ft_l   = label(lr_ft.classify(text)?);
+        let rf_w2v_l  = label(rf_w2v.classify(text)?);
+        let knn_w2v_l = label(knn_w2v.classify(text)?);
+
+        let short = if text.len() > 43 { &text[..43] } else { text };
+        println!("{:<45} {:<14} {:<12} {:<12} {}", short, knn_ft_l, lr_ft_l, rf_w2v_l, knn_w2v_l);
+    }
+
+    Ok(())
+}
+```
+
+This example requires both `models/sms_ft.bin` (from Example 4's fastText step) and `models/sms_w2v.bin` (from `docs/save-load.md` Example 5).
+
+Expected output:
+
+```
+Loaded 5574 samples
+
+Text                                          KNN(FT)        LR(FT)       RF(W2V)      KNN(W2V)
+------------------------------------------------------------------------------------------
+WINNER!! Claim your FREE iPhone now, ca...    Spam           Spam         Spam         Spam
+Are you coming to dinner tonight?             Ham            Ham          Ham          Ham
+Your account may have been hacked, clic...    Spam           Spam         Spam         Spam
+See you at the gym tomorrow morning           Ham            Ham          Ham          Ham
 ```
 
 ---

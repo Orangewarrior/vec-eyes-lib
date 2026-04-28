@@ -137,7 +137,9 @@ impl RandomForestModel {
         });
         let trees: Vec<TreeNode> = built.iter().map(|(tree, _, _)| tree.clone()).collect();
         let mut feature_importances = vec![0.0f32; feature_count];
-        for (_, _, imp) in &built { for (i, v) in imp.iter().enumerate() { feature_importances[i] += *v; } }
+        for (_, _, imp) in &built {
+            feature_importances.iter_mut().zip(imp.iter()).for_each(|(a, &v)| *a += v);
+        }
         let total_imp: f32 = feature_importances.iter().sum();
         if total_imp > 0.0 { for v in &mut feature_importances { *v /= total_imp; } }
         let oob_score = if config.oob_score && config.bootstrap {
@@ -184,9 +186,17 @@ impl RandomForestModel {
 
     pub(crate) fn predict_scores(&self, probe: &DenseMatrix) -> Vec<(ClassificationLabel, f32)> {
         let row = probe.index_axis(Axis(0), 0).to_vec();
-        let _feature_count_hint = self.feature_importances.len();
-        let mut acc = vec![0.0f32; self.encoder.labels.len()];
-        for tree in &self.trees { tree.accumulate(&row, &mut acc); }
+        let n_classes = self.encoder.labels.len();
+        let acc: Vec<f32> = self.trees
+            .par_iter()
+            .fold(
+                || vec![0.0f32; n_classes],
+                |mut a, tree| { tree.accumulate(&row, &mut a); a },
+            )
+            .reduce(
+                || vec![0.0f32; n_classes],
+                |mut a, b| { a.iter_mut().zip(b.iter()).for_each(|(x, &y)| *x += y); a },
+            );
         let raw: Vec<(ClassificationLabel, f32)> = acc.into_iter().enumerate().map(|(idx, value)| (self.encoder.decode(idx), value.max(1e-6).ln())).collect();
         softmax_scores(&raw)
     }

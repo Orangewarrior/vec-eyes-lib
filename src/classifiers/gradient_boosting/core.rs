@@ -31,56 +31,65 @@ impl RegStump {
 fn fit_regression_stump(x: &DenseMatrix, residual: &[f32]) -> RegStump {
     let rows = x.shape()[0];
     let cols = x.shape()[1];
-    let mut best = RegStump { feature: 0, threshold: 0.0, left_value: 0.0, right_value: 0.0 };
-    let mut best_loss = f32::INFINITY;
     let lambda = 1.0f32;
+    let (_, best) = (0..cols)
+        .into_par_iter()
+        .map(|feature| {
+            // Contiguous column copy → sequential memory access in all inner loops.
+            let col: Vec<f32> = x.column(feature).iter().copied().collect();
 
-    for feature in 0..cols {
-        // Contiguous column copy → sequential memory access in all inner loops.
-        let col: Vec<f32> = x.column(feature).iter().copied().collect();
+            let mut order: Vec<usize> = (0..rows).collect();
+            order.sort_by(|&a, &b| col[a].partial_cmp(&col[b]).unwrap_or(std::cmp::Ordering::Equal));
 
-        let mut order: Vec<usize> = (0..rows).collect();
-        order.sort_by(|&a, &b| col[a].partial_cmp(&col[b]).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Midpoint candidates between adjacent unique values (max 32).
-        let mut candidates: Vec<f32> = Vec::new();
-        let mut prev = col[order[0]];
-        for &r in order.iter().skip(1) {
-            let v = col[r];
-            if (v - prev).abs() > 1e-7 {
-                candidates.push((prev + v) * 0.5);
-                prev = v;
+            // Midpoint candidates between adjacent unique values (max 32).
+            let mut candidates: Vec<f32> = Vec::new();
+            let mut prev = col[order[0]];
+            for &r in order.iter().skip(1) {
+                let v = col[r];
+                if (v - prev).abs() > 1e-7 {
+                    candidates.push((prev + v) * 0.5);
+                    prev = v;
+                }
             }
-        }
-        if candidates.is_empty() { continue; }
-        let step = (candidates.len() / 32).max(1);
-        let candidates: Vec<f32> = candidates.into_iter().step_by(step).collect();
-
-        for threshold in candidates {
-            // Single sequential pass: accumulate left/right sums (SIMD-friendly).
-            let (mut l_sum, mut l_cnt, mut r_sum, mut r_cnt) =
-                (0.0f32, 0usize, 0.0f32, 0usize);
-            for (&xv, &rv) in col.iter().zip(residual.iter()) {
-                if xv <= threshold { l_sum += rv; l_cnt += 1; }
-                else               { r_sum += rv; r_cnt += 1; }
+            if candidates.is_empty() {
+                return (f32::INFINITY, RegStump { feature, threshold: 0.0, left_value: 0.0, right_value: 0.0 });
             }
-            if l_cnt == 0 || r_cnt == 0 { continue; }
-            let l_mean = l_sum / (l_cnt as f32 + lambda);
-            let r_mean = r_sum / (r_cnt as f32 + lambda);
+            let step = (candidates.len() / 32).max(1);
+            let candidates: Vec<f32> = candidates.into_iter().step_by(step).collect();
 
-            // Loss: one more sequential pass over the contiguous column.
-            let loss: f32 = col.iter().zip(residual.iter()).map(|(&xv, &rv)| {
-                let pred = if xv <= threshold { l_mean } else { r_mean };
-                let d = rv - pred;
-                d * d
-            }).sum();
+            let mut local_best_loss = f32::INFINITY;
+            let mut local_best = RegStump { feature, threshold: 0.0, left_value: 0.0, right_value: 0.0 };
 
-            if loss < best_loss {
-                best_loss = loss;
-                best = RegStump { feature, threshold, left_value: l_mean, right_value: r_mean };
+            for threshold in candidates {
+                // Single sequential pass: accumulate left/right sums (SIMD-friendly).
+                let (mut l_sum, mut l_cnt, mut r_sum, mut r_cnt) =
+                    (0.0f32, 0usize, 0.0f32, 0usize);
+                for (&xv, &rv) in col.iter().zip(residual.iter()) {
+                    if xv <= threshold { l_sum += rv; l_cnt += 1; }
+                    else               { r_sum += rv; r_cnt += 1; }
+                }
+                if l_cnt == 0 || r_cnt == 0 { continue; }
+                let l_mean = l_sum / (l_cnt as f32 + lambda);
+                let r_mean = r_sum / (r_cnt as f32 + lambda);
+
+                // Loss: one more sequential pass over the contiguous column.
+                let loss: f32 = col.iter().zip(residual.iter()).map(|(&xv, &rv)| {
+                    let pred = if xv <= threshold { l_mean } else { r_mean };
+                    let d = rv - pred;
+                    d * d
+                }).sum();
+
+                if loss < local_best_loss {
+                    local_best_loss = loss;
+                    local_best = RegStump { feature, threshold, left_value: l_mean, right_value: r_mean };
+                }
             }
-        }
-    }
+            (local_best_loss, local_best)
+        })
+        .reduce(
+            || (f32::INFINITY, RegStump { feature: 0, threshold: 0.0, left_value: 0.0, right_value: 0.0 }),
+            |(la, sa), (lb, sb)| if la <= lb { (la, sa) } else { (lb, sb) },
+        );
     best
 }
 

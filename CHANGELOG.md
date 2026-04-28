@@ -7,6 +7,164 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.2.0] - 2026-04-28
+
+### Changed
+
+#### `RulesFile` refactored into sub-configs (`src/config.rs`)
+
+The flat ~40-field `RulesFile` struct has been replaced with a nested design that groups related settings:
+
+- **`DataConfig`** — training data paths, labels, recursive mode, score-sum mode
+- **`PipelineConfig`** — NLP option, threads, embedding dimensions, security normalization flag
+- **`ModelConfig`** — internally-tagged serde enum (`#[serde(tag = "method")]`); one variant per classifier, holding only the fields that variant needs
+
+Old flat YAML format:
+```yaml
+method: RandomForest
+nlp: TfIdf
+hot_test_path: data/hot
+cold_test_path: data/cold
+random_forest_n_trees: 51
+random_forest_max_depth: 8
+```
+
+New nested YAML format:
+```yaml
+data:
+  hot_test_path: data/hot
+  cold_test_path: data/cold
+  recursive_way: On
+  score_sum: Off
+
+pipeline:
+  nlp: TfIdf
+
+model:
+  method: RandomForest
+  n_trees: 51
+  max_depth: 8
+```
+
+All 35 YAML test fixtures updated. `ModelConfig`, `DataConfig`, and `PipelineConfig` are re-exported from `vec_eyes_lib`.
+
+### Added
+
+#### `EnsembleStrategy` enum (`src/classifier.rs`)
+
+`EnsembleClassifier` now supports two combination strategies:
+
+- **`WeightedAverage`** (default) — sums weighted probabilities across classifiers, normalises by total weight; produces intuitive linear mixtures
+- **`ProductOfExperts`** — accumulates weighted log-probabilities then applies softmax; mathematically principled but sharper (more extreme) than linear averaging
+
+Builder method: `EnsembleClassifier::with_strategy(EnsembleStrategy::ProductOfExperts)`.
+
+#### Streaming dataset iterator (`src/dataset.rs`)
+
+New `training_sample_iter(path, label, recursive)` returns a lazy `impl Iterator<Item = Result<TrainingSample, VecEyesError>>`. Reading a 10 GB directory no longer requires collecting all samples into memory before training begins. `load_training_samples` now delegates to this iterator.
+
+#### Model versioning for save/load (`src/advanced_models.rs`)
+
+- **JSON**: `VersionedJsonRef` / `VersionedJsonOwned` wrapper types inject a `"version": 1` field into serialised JSON. Files without a version field are treated as version 0 (legacy) and loaded without error.
+- **Bincode**: `VersionedBincode { version: u32, classifier }` wrapper. Old unversioned bincode files now fail with a clear "please retrain" error instead of a panic.
+
+#### Label validation in `ClassificationLabel::from_str` (`src/labels.rs`)
+
+`from_str` now rejects empty strings, labels longer than 64 characters, and labels containing control characters, returning a `&'static str` error message instead of the previous `()`.
+
+### Fixed
+
+#### Path traversal guard for report output (`src/report.rs`)
+
+`ClassificationReport::write_csv` and `write_json` now call `security::sanitize_output_path` before opening the file, rejecting any path that contains `..` components.
+
+#### `IsolationForest` NLP restriction removed (`src/advanced_models.rs`)
+
+`IsolationForestClassifier::train` previously rejected `NlpOption::TfIdf` and `NlpOption::Count`. That restriction has been lifted; all NLP options now work with IsolationForest.
+
+### Performance
+
+#### Rayon parallelism throughout classifier cores
+
+- `IsolationForest::predict_scores` — per-tree path-length accumulation is now parallel via `rayon::par_iter`
+- `RandomForest::predict_scores` — vote accumulation is parallel; per-tree feature-importance updates use `zip().for_each()` instead of indexed loops
+- `GradientBoosting::fit_regression_stump` — best-split search across features is parallel
+- `SVM Landmark.transform` — row-wise landmark projection now uses `axis_iter_mut().into_par_iter()`
+- `AdvancedClassifier::transform_count` — row-wise embedding construction is parallel; L2 normalisation is inlined via `mapv_inplace`
+
+#### Lower-contention thread-pool cache (`src/parallel.rs`)
+
+Replaced `Mutex<HashMap<usize, Arc<ThreadPool>>>` with a `RwLock` double-check pattern: threads that request an already-cached pool size take the read path without ever acquiring an exclusive lock.
+
+---
+
+## [3.1.0] - 2026-04-27
+
+### Added
+
+#### word2vec binary loader (`src/nlp/word2vec_bin.rs`)
+
+Pure-Rust parser for the Google word2vec binary format (`.bin`) produced by the original `word2vec` C tool and its Rust/Python reimplementations. Handles both variants of the trailing-newline encoding used by different encoders.
+
+Key types:
+- `Word2VecBin` — raw loader; holds word index + flat float32 matrix in memory
+- `Word2VecEmbeddings` — extracted subset of vectors; serde-serializable for fast persistence; includes a pre-computed `centroid` vector for OOV tokens
+
+Key methods:
+- `Word2VecBin::load(path)` — parse a `.bin` file (header: `<vocab_size> <dims>\n`, then `<word> <float32 × dims> <\n>` per entry)
+- `Word2VecBin::extract_all()` — extract every word vector
+- `Word2VecBin::extract_for_vocab(vocab)` — extract only vectors needed by a given vocabulary; unknown words are represented by the centroid
+- `Word2VecEmbeddings::vector_for(word)` — in-vocabulary lookup or centroid fallback for OOV
+- `Word2VecEmbeddings::save_bincode / load_bincode` — persist/reload extracted embeddings
+
+OOV strategy: vocabulary centroid (mean of all word vectors) pre-computed at extraction time. Unlike fastText, word2vec has no subword model, so the centroid is the most stable fallback that preserves dimensionality and roughly preserves the embedding space centre.
+
+#### `ExternalEmbeddings` unified enum (`src/nlp/external_embeddings.rs`)
+
+```rust
+pub enum ExternalEmbeddings {
+    FastText(FastTextEmbeddings),
+    Word2Vec(Word2VecEmbeddings),
+}
+```
+
+Single type accepted by every classifier's `train_with_external_embeddings` method. Dispatches to the appropriate embedding backend at inference time. Supports `save_bincode` / `load_bincode` for caching.
+
+Methods:
+- `ExternalEmbeddings::dims() -> usize`
+- `ExternalEmbeddings::save_bincode(path) -> Result<()>`
+- `ExternalEmbeddings::load_bincode(path) -> Result<Self>`
+
+#### `train_with_external_embeddings` on all classifiers
+
+Unified constructor accepting `ExternalEmbeddings` (fastText or word2vec) on every classifier type:
+
+- `KnnClassifier::train_with_external_embeddings(samples, embeddings, metric, k, threads, normalize_features)`
+- `LogisticClassifier::train_with_external_embeddings(samples, embeddings, config, threads)`
+- `SvmClassifier::train_with_external_embeddings(samples, embeddings, config, threads)`
+- `RandomForestClassifier::train_with_external_embeddings(samples, embeddings, config, threads)`
+- `GradientBoostingClassifier::train_with_external_embeddings(samples, embeddings, config, threads)`
+- `IsolationForestClassifier::train_with_external_embeddings(samples, embeddings, config, hot_label, cold_label, threads)`
+- `AdvancedClassifier::train_with_external_embeddings(method, samples, embeddings, hot_label, cold_label, config)`
+
+The older `train_with_external_fasttext` methods are kept for backwards compatibility.
+
+#### `ClassifierSpec` / `KnnSpec` / `AdvancedSpec` — `external_embeddings` builder method
+
+Both `KnnSpec` and `AdvancedSpec` gain `.external_embeddings(ExternalEmbeddings)` accepting the unified enum. The existing `.external_fasttext(FastTextEmbeddings)` is kept as a thin convenience wrapper.
+
+#### Documentation updates
+
+- `docs/save-load.md` — migrated all examples to the new `train_with_external_embeddings` API; added three end-to-end word2vec examples (News/KNN-Euclidean, SMS/RandomForest, Fraud/SVM) with full bash + Rust code
+- `docs/real_examples.md` — four new external-embedding examples added (examples 4–7): SMS+fastText+KNN, News+word2vec+RandomForest, Splice+word2vec+SVM, multi-classifier comparison (KNN+LR fastText vs RF+KNN word2vec side-by-side)
+
+### Changed
+
+- `docs/save-load.md` — section renamed from "External fastText embeddings" to "External embeddings" (covers both fastText and word2vec)
+- Table entry for external embedding persistence updated from `FastTextEmbeddings::save_bincode → train_with_external_fasttext` to `ExternalEmbeddings::save_bincode → train_with_external_embeddings`
+
+---
+
 ## [3.0.0] - 2026-04-26
 
 ### Added

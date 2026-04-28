@@ -1,14 +1,25 @@
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
-static GLOBAL_POOLS: OnceLock<Mutex<HashMap<usize, Arc<ThreadPool>>>> = OnceLock::new();
+static GLOBAL_POOLS: OnceLock<RwLock<HashMap<usize, Arc<ThreadPool>>>> = OnceLock::new();
 
 const MAX_POOL_CACHE: usize = 32;
 
 fn cached_pool(threads: usize) -> Option<Arc<ThreadPool>> {
-    let cache = GLOBAL_POOLS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().ok()?;
+    let cache = GLOBAL_POOLS.get_or_init(|| RwLock::new(HashMap::new()));
+
+    // Fast path: pool already exists — shared read, no contention.
+    {
+        let guard = cache.read().ok()?;
+        if let Some(pool) = guard.get(&threads) {
+            return Some(Arc::clone(pool));
+        }
+    }
+
+    // Slow path: create the pool under an exclusive write lock.
+    let mut guard = cache.write().ok()?;
+    // Double-check: another thread may have inserted while we were waiting.
     if let Some(pool) = guard.get(&threads) {
         return Some(Arc::clone(pool));
     }

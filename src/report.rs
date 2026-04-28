@@ -25,6 +25,7 @@ impl ClassificationReport {
     }
 
     pub fn write_csv<P: AsRef<Path>>(&self, path: P) -> Result<(), VecEyesError> {
+        crate::security::sanitize_output_path(path.as_ref())?;
         let mut writer = csv::WriterBuilder::new().delimiter(b';').from_path(path)?;
         writer.write_record([
             "title object",
@@ -50,6 +51,7 @@ impl ClassificationReport {
 
     pub fn write_json<P: AsRef<Path>>(&self, path: P) -> Result<(), VecEyesError> {
         let path = path.as_ref();
+        crate::security::sanitize_output_path(path)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }

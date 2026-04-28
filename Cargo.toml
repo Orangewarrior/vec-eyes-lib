@@ -1,6 +1,6 @@
 [package]
 name = "vec-eyes-lib"
-version = "3.0.0"
+version = "3.2.0"
 edition = "2021"
 license = "MIT"
 authors = ["Orangewarrior"]
@@ -20,7 +20,7 @@ vectorscan = ["dep:vectorscan-rs"]
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 csv = "1.4"
-ndarray = { version = "0.17", features = ["serde"] }
+ndarray = { version = "0.17", features = ["serde", "rayon"] }
 # BLAS provider – backend chosen by the downstream binary crate via feature flags
 blas-src = { version = "0.10", default-features = false, optional = true }
 rayon = "1.11"

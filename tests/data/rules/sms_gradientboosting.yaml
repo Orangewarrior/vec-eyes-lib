@@ -1,13 +1,18 @@
 report_name: UCI SMS
-method: GradientBoosting
-nlp: TfIdf
-recursive_way: ON
-hot_test_path: tests/data/uci_sms/hot
-cold_test_path: tests/data/uci_sms/cold
-hot_label: SPAM
-cold_label: RAW_DATA
-score_sum: OFF
 
-gradient_boosting_n_estimators: 40
-gradient_boosting_learning_rate: 0.12
-gradient_boosting_max_depth: 1
+data:
+  hot_test_path: tests/data/uci_sms/hot
+  cold_test_path: tests/data/uci_sms/cold
+  hot_label: SPAM
+  cold_label: RAW_DATA
+  recursive_way: ON
+  score_sum: OFF
+
+pipeline:
+  nlp: TfIdf
+
+model:
+  method: GradientBoosting
+  n_estimators: 40
+  learning_rate: 0.12
+  max_depth: 1

@@ -97,17 +97,16 @@ impl IsolationForestModel {
         });
 
         let avg_c = c_factor(rows.len().min(subsample_size.max(8)) as f32).max(1e-6);
-        let mut scores = Vec::new();
-        for row_idx in 0..cold_matrix.shape()[0] {
-            let row = cold_matrix.index_axis(Axis(0), row_idx).to_vec();
-            let mut path_sum = 0.0;
-            for tree in &trees {
-                path_sum += tree.path_length(&row, 0.0);
-            }
-            let avg_path = path_sum / trees.len().max(1) as f32;
-            let score = 2f32.powf(-avg_path / avg_c);
-            scores.push(score);
-        }
+        let n = cold_matrix.shape()[0];
+        let mut scores: Vec<f32> = (0..n)
+            .into_par_iter()
+            .map(|row_idx| {
+                let row = cold_matrix.index_axis(Axis(0), row_idx).to_vec();
+                let path_sum: f32 = trees.iter().map(|tree| tree.path_length(&row, 0.0)).sum();
+                let avg_path = path_sum / trees.len().max(1) as f32;
+                2f32.powf(-avg_path / avg_c)
+            })
+            .collect();
         scores.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let pos = ((scores.len() as f32) * (1.0 - contamination.clamp(0.001, 0.49))).floor() as usize;
         let threshold = scores.get(pos.min(scores.len().saturating_sub(1))).copied().unwrap_or(0.6).max(0.55);
@@ -128,10 +127,7 @@ impl IsolationForestModel {
     pub(crate) fn predict_scores(&self, probe: &DenseMatrix) -> Vec<(ClassificationLabel, f32)> {
         let row = probe.index_axis(Axis(0), 0).to_vec();
         let avg_c = c_factor(self.subsample_size.max(8) as f32).max(1e-6);
-        let mut path_sum = 0.0;
-        for tree in &self.trees {
-            path_sum += tree.path_length(&row, 0.0);
-        }
+        let path_sum: f32 = self.trees.par_iter().map(|tree| tree.path_length(&row, 0.0)).sum();
         let avg_path = path_sum / self.trees.len().max(1) as f32;
         let score = 2f32.powf(-avg_path / avg_c);
         let z = (score - self.score_mean) / self.score_std.max(1e-6);

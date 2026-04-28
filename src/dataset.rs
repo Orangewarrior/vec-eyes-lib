@@ -111,12 +111,30 @@ pub fn load_training_samples(
     label: ClassificationLabel,
     recursive: bool,
 ) -> Result<Vec<TrainingSample>, VecEyesError> {
+    training_sample_iter(path, label, recursive)?.collect()
+}
+
+/// Lazy iterator over training samples in `path`.
+///
+/// Unlike [`load_training_samples`], this does not read all files into memory
+/// at once — each `TrainingSample` is loaded on demand.  Useful for large
+/// corpora where the full dataset would not fit in RAM:
+///
+/// ```rust,ignore
+/// // Stream up to 10 000 samples without loading the entire corpus.
+/// let samples: Vec<_> = training_sample_iter(&path, label, true)?
+///     .take(10_000)
+///     .collect::<Result<_, _>>()?;
+/// ```
+pub fn training_sample_iter(
+    path: &Path,
+    label: ClassificationLabel,
+    recursive: bool,
+) -> Result<impl Iterator<Item = Result<TrainingSample, VecEyesError>>, VecEyesError> {
     let files = collect_files_recursively(path, recursive)?;
-    let mut samples = Vec::new();
-    for file in files {
+    Ok(files.into_iter().map(move |file| {
         let text = read_text_file(&file)?;
         let source_name = file.to_string_lossy().to_string();
-        samples.push(TrainingSample { label: label.clone(), text, source_name });
-    }
-    Ok(samples)
+        Ok(TrainingSample { label: label.clone(), text, source_name })
+    }))
 }

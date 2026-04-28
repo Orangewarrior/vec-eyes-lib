@@ -199,6 +199,8 @@ enum FeaturePipeline {
     Word2Vec { model: WordEmbeddingModel, idf: TfIdfModel },
     FastText { model: WordEmbeddingModel, idf: TfIdfModel },
     ExternalFastText { embeddings: FastTextEmbeddings, idf: TfIdfModel },
+    /// Unified external embeddings — fastText or word2vec, selected at build time.
+    ExternalEmbeddings { embeddings: crate::nlp::ExternalEmbeddings, idf: TfIdfModel },
 }
 
 impl FeaturePipeline {
@@ -246,41 +248,37 @@ impl FeaturePipeline {
             Self::ExternalFastText { embeddings, idf } => {
                 crate::nlp::fasttext_bin::embed_texts(embeddings, texts, Some(idf))
             }
+            Self::ExternalEmbeddings { embeddings, idf } => {
+                crate::nlp::external_embeddings::embed_external(embeddings, texts, Some(idf))
+            }
         }
     }
 }
 
 fn transform_count<S: AsRef<str>>(model: &TfIdfModel, texts: &[S]) -> DenseMatrix {
-    let rows = texts.len();
+    use rayon::prelude::*;
     let cols = model.vocab.len();
-    let mut matrix = ndarray::Array2::<f32>::zeros((rows, cols));
-
-    for row in 0..texts.len() {
-        let normalized = normalize_text(texts[row].as_ref());
-        let tokens = tokenize(&normalized);
-        for token in tokens {
-            if let Some(index) = model.token_to_index.get(&token) {
-                matrix[[row, *index]] += 1.0;
-            }
-        }
-        l2_normalize_row(&mut matrix, row);
-    }
-
+    let refs: Vec<&str> = texts.iter().map(|s| s.as_ref()).collect();
+    let mut matrix = ndarray::Array2::<f32>::zeros((refs.len(), cols));
     matrix
-}
-
-fn l2_normalize_row(matrix: &mut DenseMatrix, row: usize) {
-    let mut norm = 0.0f32;
-    for col in 0..matrix.shape()[1] {
-        let v = matrix[[row, col]];
-        norm += v * v;
-    }
-    norm = norm.sqrt();
-    if norm > 0.0 {
-        for col in 0..matrix.shape()[1] {
-            matrix[[row, col]] /= norm;
-        }
-    }
+        .axis_iter_mut(ndarray::Axis(0))
+        .into_par_iter()
+        .zip(refs.par_iter())
+        .for_each(|(mut row, &text)| {
+            let normalized = normalize_text(text);
+            let tokens = tokenize(&normalized);
+            for token in tokens {
+                if let Some(index) = model.token_to_index.get(&token) {
+                    row[*index] += 1.0;
+                }
+            }
+            let norm_sq: f32 = row.iter().map(|v| v * v).sum();
+            let norm = norm_sq.sqrt();
+            if norm > 0.0 {
+                row.mapv_inplace(|v| v / norm);
+            }
+        });
+    matrix
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -317,6 +315,40 @@ impl LabelEncoder {
     }
 }
 
+// ── Model versioning ─────────────────────────────────────────────────────────
+
+const CLASSIFIER_FORMAT_VERSION: u32 = 1;
+
+/// JSON save wrapper: serialize path only.
+/// `#[serde(flatten)]` inlines classifier fields so the file stays readable.
+#[derive(serde::Serialize)]
+struct VersionedJsonRef<'a> {
+    version: u32,
+    #[serde(flatten)]
+    classifier: &'a AdvancedClassifier,
+}
+
+/// JSON load wrapper: deserialize path.
+/// Legacy files (no `"version"` field) load with `version = 0`.
+#[derive(serde::Deserialize)]
+struct VersionedJsonOwned {
+    #[serde(default = "default_json_version")]
+    version: u32,
+    #[serde(flatten)]
+    classifier: AdvancedClassifier,
+}
+fn default_json_version() -> u32 { 0 }
+
+/// Bincode save wrapper.  Placed as the first field so the version u32 is
+/// always at byte offset 0, making format detection unambiguous.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct VersionedBincode {
+    version: u32,
+    classifier: AdvancedClassifier,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum AdvancedInner {
     Logistic(LogisticOVR),
@@ -351,13 +383,6 @@ impl AdvancedClassifier {
         config: &AdvancedModelConfig,
     ) -> Result<Self, VecEyesError> {
         let dims = config.embedding_dimensions.unwrap_or(32).max(1);
-        if matches!(method, AdvancedMethod::IsolationForest)
-            && !matches!(nlp, NlpOption::Word2Vec | NlpOption::FastText)
-        {
-            return Err(VecEyesError::InvalidConfig(
-                "IsolationForest currently requires Word2Vec or FastText embeddings".into(),
-            ));
-        }
         let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
         let inner = Self::fit_inner(method, &matrix, samples, hot_label, cold_label, config)?;
         Ok(Self { pipeline, inner })
@@ -386,18 +411,31 @@ impl AdvancedClassifier {
     }
 
     /// Persist the trained model to a JSON file.
+    ///
+    /// The file includes a `"version"` field for forward-compatibility detection.
     pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
-        let json = serde_json::to_string(self)
+        let versioned = VersionedJsonRef { version: CLASSIFIER_FORMAT_VERSION, classifier: self };
+        let json = serde_json::to_string(&versioned)
             .map_err(|e| VecEyesError::invalid_config("AdvancedClassifier::save", e.to_string()))?;
         std::fs::write(path, json)?;
         Ok(())
     }
 
     /// Load a previously saved model from a JSON file.
+    ///
+    /// Accepts both the current versioned format and the legacy format (no
+    /// `"version"` field) produced by vec-eyes-lib < 3.2.
     pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
         let json = std::fs::read_to_string(path)?;
-        serde_json::from_str(&json)
-            .map_err(|e| VecEyesError::invalid_config("AdvancedClassifier::load", e.to_string()))
+        let versioned: VersionedJsonOwned = serde_json::from_str(&json)
+            .map_err(|e| VecEyesError::invalid_config("AdvancedClassifier::load", e.to_string()))?;
+        match versioned.version {
+            0 | CLASSIFIER_FORMAT_VERSION => Ok(versioned.classifier),
+            v => Err(VecEyesError::invalid_config(
+                "AdvancedClassifier::load",
+                format!("unsupported model version {v}; this binary supports version {CLASSIFIER_FORMAT_VERSION}"),
+            )),
+        }
     }
 
     /// Train using external fastText embeddings instead of the internal NLP pipeline.
@@ -413,6 +451,26 @@ impl AdvancedClassifier {
         let texts: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
         let idf = fit_tfidf(&texts);
         let pipeline = FeaturePipeline::ExternalFastText { embeddings, idf };
+        let matrix = pipeline.transform_batch(&texts);
+        let inner = Self::fit_inner(method, &matrix, samples, hot_label, cold_label, config)?;
+        Ok(Self { pipeline, inner })
+    }
+
+    /// Train using a unified [`ExternalEmbeddings`] — either fastText or word2vec.
+    ///
+    /// A TF-IDF model is fitted on the training corpus and stored alongside
+    /// the embeddings so inference uses the same IDF weights as training.
+    pub fn train_with_external_embeddings(
+        method: AdvancedMethod,
+        samples: &[TrainingSample],
+        embeddings: crate::nlp::ExternalEmbeddings,
+        hot_label: ClassificationLabel,
+        cold_label: ClassificationLabel,
+        config: &AdvancedModelConfig,
+    ) -> Result<Self, VecEyesError> {
+        let texts: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
+        let idf = fit_tfidf(&texts);
+        let pipeline = FeaturePipeline::ExternalEmbeddings { embeddings, idf };
         let matrix = pipeline.transform_batch(&texts);
         let inner = Self::fit_inner(method, &matrix, samples, hot_label, cold_label, config)?;
         Ok(Self { pipeline, inner })
@@ -465,18 +523,35 @@ impl AdvancedClassifier {
     }
 
     /// Save the entire model as a bincode file (fast, compact).
+    ///
+    /// Files saved with this version include a leading version `u32` and are
+    /// not compatible with the legacy format produced by vec-eyes-lib < 3.2.
+    /// Use [`save`](AdvancedClassifier::save) / [`load`](AdvancedClassifier::load)
+    /// (JSON) if backwards compatibility is required.
     pub fn save_bincode<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
-        let bytes = bincode::serialize(self)
+        let versioned = VersionedBincode { version: CLASSIFIER_FORMAT_VERSION, classifier: self.clone() };
+        let bytes = bincode::serialize(&versioned)
             .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
         std::fs::write(path, bytes)?;
         Ok(())
     }
 
-    /// Load a model from a bincode file.
+    /// Load a model from a bincode file produced by [`save_bincode`](AdvancedClassifier::save_bincode).
     pub fn load_bincode<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
         let bytes = std::fs::read(path)?;
-        bincode::deserialize(&bytes)
-            .map_err(|e| VecEyesError::Serialization(e.to_string()))
+        let versioned: VersionedBincode = bincode::deserialize(&bytes).map_err(|e| {
+            VecEyesError::Serialization(format!(
+                "model deserialization failed — file may be a legacy format (pre-3.2) \
+                 without a version header; re-save using the JSON format to migrate: {e}"
+            ))
+        })?;
+        match versioned.version {
+            CLASSIFIER_FORMAT_VERSION => Ok(versioned.classifier),
+            v => Err(VecEyesError::invalid_config(
+                "AdvancedClassifier::load_bincode",
+                format!("unsupported model version {v}; this binary supports version {CLASSIFIER_FORMAT_VERSION}"),
+            )),
+        }
     }
 
     /// Save NLP pipeline and ML weights to **separate** bincode files.
@@ -616,6 +691,29 @@ macro_rules! impl_advanced_classifier {
                     ..Default::default()
                 };
                 AdvancedClassifier::train_with_external_fasttext(
+                    $method,
+                    samples,
+                    embeddings,
+                    ClassificationLabel::WebAttack,
+                    ClassificationLabel::RawData,
+                    &mc,
+                )
+                .map(Self)
+            }
+
+            /// Train using a unified [`ExternalEmbeddings`] (fastText or word2vec).
+            pub fn train_with_external_embeddings(
+                samples: &[TrainingSample],
+                embeddings: crate::nlp::ExternalEmbeddings,
+                config: $config_type,
+                threads: Option<usize>,
+            ) -> Result<Self, VecEyesError> {
+                let mc = AdvancedModelConfig {
+                    $config_field: Some(config),
+                    threads,
+                    ..Default::default()
+                };
+                AdvancedClassifier::train_with_external_embeddings(
                     $method,
                     samples,
                     embeddings,
@@ -773,6 +871,31 @@ impl IsolationForestClassifier {
             ..Default::default()
         };
         AdvancedClassifier::train_with_external_fasttext(
+            AdvancedMethod::IsolationForest,
+            samples,
+            embeddings,
+            hot_label,
+            cold_label,
+            &mc,
+        )
+        .map(Self)
+    }
+
+    /// Train using a unified [`ExternalEmbeddings`] (fastText or word2vec).
+    pub fn train_with_external_embeddings(
+        samples: &[TrainingSample],
+        embeddings: crate::nlp::ExternalEmbeddings,
+        config: IsolationForestConfig,
+        hot_label: ClassificationLabel,
+        cold_label: ClassificationLabel,
+        threads: Option<usize>,
+    ) -> Result<Self, VecEyesError> {
+        let mc = AdvancedModelConfig {
+            isolation_forest: Some(config),
+            threads,
+            ..Default::default()
+        };
+        AdvancedClassifier::train_with_external_embeddings(
             AdvancedMethod::IsolationForest,
             samples,
             embeddings,

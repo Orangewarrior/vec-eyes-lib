@@ -56,9 +56,18 @@ impl Display for ClassificationLabel {
 }
 
 impl FromStr for ClassificationLabel {
-    type Err = ();
+    type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Err("label cannot be empty");
+        }
+        if s.len() > 64 {
+            return Err("label exceeds maximum length of 64 characters");
+        }
+        if s.chars().any(|c| c.is_control()) {
+            return Err("label contains control characters");
+        }
         Ok(match s.to_ascii_uppercase().as_str() {
             "SPAM" => Self::Spam,
             "MALWARE" => Self::Malware,

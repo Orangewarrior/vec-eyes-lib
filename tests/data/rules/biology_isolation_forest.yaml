@@ -1,13 +1,18 @@
 report_name: UCI Biology Isolation
-method: IsolationForest
-nlp: FastText
-recursive_way: ON
-hot_test_path: tests/data/uci_biology/hot
-cold_test_path: tests/data/uci_biology/cold
-hot_label: VIRUS
-cold_label: HUMAN
-score_sum: OFF
 
-isolation_forest_n_trees: 72
-isolation_forest_contamination: 0.08
-isolation_forest_subsample_size: 32
+data:
+  hot_test_path: tests/data/uci_biology/hot
+  cold_test_path: tests/data/uci_biology/cold
+  hot_label: VIRUS
+  cold_label: HUMAN
+  recursive_way: ON
+  score_sum: OFF
+
+pipeline:
+  nlp: FastText
+
+model:
+  method: IsolationForest
+  n_trees: 72
+  contamination: 0.08
+  subsample_size: 32

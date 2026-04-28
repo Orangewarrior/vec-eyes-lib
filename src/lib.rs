@@ -52,7 +52,7 @@ pub(crate) mod math;
 
 pub use classifier::{
     BayesBuilder, BayesClassifier, ClassificationResult, Classifier, ClassifierBuilder,
-    ClassifierFactory, ClassifierMethod, DistanceMetric, EnsembleClassifier,
+    ClassifierFactory, ClassifierMethod, DistanceMetric, EnsembleClassifier, EnsembleStrategy,
     ExplainableClassifier, KnnBuilder, KnnClassifier, MethodKind, TokenContribution,
 };
 pub use advanced_models::{
@@ -64,9 +64,10 @@ pub use advanced_models::{
     RandomForestClassifier, SvmClassifier,
 };
 pub use config::{
-    ExtraMatchConfig, ExtraMatchEngine, RecursiveMode, RulesFile, ScoreSumMode,
+    DataConfig, ExtraMatchConfig, ExtraMatchEngine, ModelConfig, PipelineConfig,
+    RecursiveMode, RulesFile, ScoreSumMode,
 };
-pub use dataset::{collect_files_recursively, read_text_file, load_training_samples};
+pub use dataset::{collect_files_recursively, load_training_samples, read_text_file, training_sample_iter};
 pub use error::VecEyesError;
 pub use labels::ClassificationLabel;
 pub use matcher::{
@@ -75,6 +76,8 @@ pub use matcher::{
 };
 pub use nlp::{FastTextConfig, FastTextConfigBuilder, NlpOption};
 pub use nlp::fasttext_bin::{FastTextBin, FastTextEmbeddings};
+pub use nlp::word2vec_bin::{Word2VecBin, Word2VecEmbeddings};
+pub use nlp::external_embeddings::ExternalEmbeddings;
 pub use report::{ClassificationReport, ClassificationRecord};
 
 pub use dataset::read_text_file_limited;

@@ -75,18 +75,45 @@ pub trait ExplainableClassifier: Classifier {
     fn explain(&self, text: &str) -> Vec<TokenContribution>;
 }
 
+/// Combination strategy for [`EnsembleClassifier`].
+#[derive(Debug, Clone, Copy, Default)]
+pub enum EnsembleStrategy {
+    /// Weighted average of probabilities (default).
+    ///
+    /// Each member's softmax output is multiplied by its weight and the results
+    /// are summed, then renormalised to sum to 1.0.  Recommended when all
+    /// classifiers are well-calibrated.
+    #[default]
+    WeightedAverage,
+    /// Product-of-experts: accumulate weighted log-probabilities then
+    /// renormalise via softmax.
+    ///
+    /// Sharpens the distribution — the ensemble only assigns high probability
+    /// to a class when all experts agree.  Use when classifiers are over-confident
+    /// and you want to penalise disagreement.
+    ProductOfExperts,
+}
+
 pub struct EnsembleClassifier {
     members: Vec<(Box<dyn Classifier>, f32)>,
+    strategy: EnsembleStrategy,
 }
 
 impl EnsembleClassifier {
-    /// Build an ensemble.  Weights are normalised to sum to 1.0 automatically
-    /// so callers can supply raw relative weights (e.g. `0.7` / `0.3`) or
-    /// probabilities — the result is the same.
+    /// Build an ensemble with the default [`EnsembleStrategy::WeightedAverage`] strategy.
+    ///
+    /// Weights are normalised to sum to 1.0 automatically so callers can supply
+    /// raw relative weights (e.g. `0.7` / `0.3`) or probabilities.
     pub fn new(members: Vec<(Box<dyn Classifier>, f32)>) -> Self {
         let total: f32 = members.iter().map(|(_, w)| w.abs()).sum::<f32>().max(1e-9);
         let members = members.into_iter().map(|(c, w)| (c, w / total)).collect();
-        Self { members }
+        Self { members, strategy: EnsembleStrategy::WeightedAverage }
+    }
+
+    /// Override the combination strategy (builder-style).
+    pub fn with_strategy(mut self, strategy: EnsembleStrategy) -> Self {
+        self.strategy = strategy;
+        self
     }
 }
 
@@ -97,18 +124,33 @@ impl Classifier for EnsembleClassifier {
         let mut hits = Vec::new();
         for (classifier, weight) in &self.members {
             let result = classifier.classify_text(text, score_sum_mode, matchers);
-            // Sum weighted log-probs: each member already emits calibrated
-            // probabilities via softmax; taking their ln converts back to
-            // log-space before combining, which is mathematically correct for
-            // a product-of-experts ensemble.
-            for (label, score) in result.labels {
-                *acc.entry(label).or_insert(0.0) += weight * score.max(1e-9).ln();
+            match self.strategy {
+                EnsembleStrategy::WeightedAverage => {
+                    for (label, score) in result.labels {
+                        *acc.entry(label).or_insert(0.0) += weight * score;
+                    }
+                }
+                EnsembleStrategy::ProductOfExperts => {
+                    for (label, score) in result.labels {
+                        *acc.entry(label).or_insert(0.0) += weight * score.max(1e-9).ln();
+                    }
+                }
             }
             hits.extend(result.extra_hits);
         }
-        let mut labels: Vec<(ClassificationLabel, f32)> = acc.into_iter().collect();
-        labels.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let labels = crate::math::softmax_scores(&labels);
+        let labels = match self.strategy {
+            EnsembleStrategy::WeightedAverage => {
+                let total: f32 = acc.values().sum::<f32>().max(1e-9);
+                let mut v: Vec<(ClassificationLabel, f32)> = acc.into_iter().map(|(l, s)| (l, s / total)).collect();
+                v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                v
+            }
+            EnsembleStrategy::ProductOfExperts => {
+                let mut v: Vec<(ClassificationLabel, f32)> = acc.into_iter().collect();
+                v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                crate::math::softmax_scores(&v)
+            }
+        };
         ClassificationResult { labels, extra_hits: hits }
     }
 }

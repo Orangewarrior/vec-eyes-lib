@@ -52,7 +52,7 @@ pub(crate) mod math;
 
 pub use classifier::{
     BayesBuilder, BayesClassifier, ClassificationResult, Classifier, ClassifierBuilder,
-    ClassifierFactory, ClassifierMethod, DistanceMetric, EnsembleClassifier,
+    ClassifierFactory, ClassifierMethod, DistanceMetric, EnsembleClassifier, EnsembleStrategy,
     ExplainableClassifier, KnnBuilder, KnnClassifier, MethodKind, TokenContribution,
 };
 pub use advanced_models::{
@@ -66,7 +66,7 @@ pub use advanced_models::{
 pub use config::{
     ExtraMatchConfig, ExtraMatchEngine, RecursiveMode, RulesFile, ScoreSumMode,
 };
-pub use dataset::{collect_files_recursively, read_text_file, load_training_samples};
+pub use dataset::{collect_files_recursively, load_training_samples, read_text_file, training_sample_iter};
 pub use error::VecEyesError;
 pub use labels::ClassificationLabel;
 pub use matcher::{

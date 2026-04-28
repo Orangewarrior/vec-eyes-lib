@@ -315,6 +315,40 @@ impl LabelEncoder {
     }
 }
 
+// ── Model versioning ─────────────────────────────────────────────────────────
+
+const CLASSIFIER_FORMAT_VERSION: u32 = 1;
+
+/// JSON save wrapper: serialize path only.
+/// `#[serde(flatten)]` inlines classifier fields so the file stays readable.
+#[derive(serde::Serialize)]
+struct VersionedJsonRef<'a> {
+    version: u32,
+    #[serde(flatten)]
+    classifier: &'a AdvancedClassifier,
+}
+
+/// JSON load wrapper: deserialize path.
+/// Legacy files (no `"version"` field) load with `version = 0`.
+#[derive(serde::Deserialize)]
+struct VersionedJsonOwned {
+    #[serde(default = "default_json_version")]
+    version: u32,
+    #[serde(flatten)]
+    classifier: AdvancedClassifier,
+}
+fn default_json_version() -> u32 { 0 }
+
+/// Bincode save wrapper.  Placed as the first field so the version u32 is
+/// always at byte offset 0, making format detection unambiguous.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct VersionedBincode {
+    version: u32,
+    classifier: AdvancedClassifier,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum AdvancedInner {
     Logistic(LogisticOVR),
@@ -349,13 +383,6 @@ impl AdvancedClassifier {
         config: &AdvancedModelConfig,
     ) -> Result<Self, VecEyesError> {
         let dims = config.embedding_dimensions.unwrap_or(32).max(1);
-        if matches!(method, AdvancedMethod::IsolationForest)
-            && !matches!(nlp, NlpOption::Word2Vec | NlpOption::FastText)
-        {
-            return Err(VecEyesError::InvalidConfig(
-                "IsolationForest currently requires Word2Vec or FastText embeddings".into(),
-            ));
-        }
         let (pipeline, matrix) = FeaturePipeline::fit(samples, nlp, dims)?;
         let inner = Self::fit_inner(method, &matrix, samples, hot_label, cold_label, config)?;
         Ok(Self { pipeline, inner })
@@ -384,18 +411,31 @@ impl AdvancedClassifier {
     }
 
     /// Persist the trained model to a JSON file.
+    ///
+    /// The file includes a `"version"` field for forward-compatibility detection.
     pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
-        let json = serde_json::to_string(self)
+        let versioned = VersionedJsonRef { version: CLASSIFIER_FORMAT_VERSION, classifier: self };
+        let json = serde_json::to_string(&versioned)
             .map_err(|e| VecEyesError::invalid_config("AdvancedClassifier::save", e.to_string()))?;
         std::fs::write(path, json)?;
         Ok(())
     }
 
     /// Load a previously saved model from a JSON file.
+    ///
+    /// Accepts both the current versioned format and the legacy format (no
+    /// `"version"` field) produced by vec-eyes-lib < 3.2.
     pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
         let json = std::fs::read_to_string(path)?;
-        serde_json::from_str(&json)
-            .map_err(|e| VecEyesError::invalid_config("AdvancedClassifier::load", e.to_string()))
+        let versioned: VersionedJsonOwned = serde_json::from_str(&json)
+            .map_err(|e| VecEyesError::invalid_config("AdvancedClassifier::load", e.to_string()))?;
+        match versioned.version {
+            0 | CLASSIFIER_FORMAT_VERSION => Ok(versioned.classifier),
+            v => Err(VecEyesError::invalid_config(
+                "AdvancedClassifier::load",
+                format!("unsupported model version {v}; this binary supports version {CLASSIFIER_FORMAT_VERSION}"),
+            )),
+        }
     }
 
     /// Train using external fastText embeddings instead of the internal NLP pipeline.
@@ -483,18 +523,35 @@ impl AdvancedClassifier {
     }
 
     /// Save the entire model as a bincode file (fast, compact).
+    ///
+    /// Files saved with this version include a leading version `u32` and are
+    /// not compatible with the legacy format produced by vec-eyes-lib < 3.2.
+    /// Use [`save`](AdvancedClassifier::save) / [`load`](AdvancedClassifier::load)
+    /// (JSON) if backwards compatibility is required.
     pub fn save_bincode<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
-        let bytes = bincode::serialize(self)
+        let versioned = VersionedBincode { version: CLASSIFIER_FORMAT_VERSION, classifier: self.clone() };
+        let bytes = bincode::serialize(&versioned)
             .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
         std::fs::write(path, bytes)?;
         Ok(())
     }
 
-    /// Load a model from a bincode file.
+    /// Load a model from a bincode file produced by [`save_bincode`](AdvancedClassifier::save_bincode).
     pub fn load_bincode<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
         let bytes = std::fs::read(path)?;
-        bincode::deserialize(&bytes)
-            .map_err(|e| VecEyesError::Serialization(e.to_string()))
+        let versioned: VersionedBincode = bincode::deserialize(&bytes).map_err(|e| {
+            VecEyesError::Serialization(format!(
+                "model deserialization failed — file may be a legacy format (pre-3.2) \
+                 without a version header; re-save using the JSON format to migrate: {e}"
+            ))
+        })?;
+        match versioned.version {
+            CLASSIFIER_FORMAT_VERSION => Ok(versioned.classifier),
+            v => Err(VecEyesError::invalid_config(
+                "AdvancedClassifier::load_bincode",
+                format!("unsupported model version {v}; this binary supports version {CLASSIFIER_FORMAT_VERSION}"),
+            )),
+        }
     }
 
     /// Save NLP pipeline and ML weights to **separate** bincode files.

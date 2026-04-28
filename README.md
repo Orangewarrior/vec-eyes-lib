@@ -14,9 +14,9 @@ Vec-Eyes Core is the **engine behind Vec-Eyes CLI**.
 
 It provides:
 
-- 🧠 Machine Learning (KNN, Naive Bayes)
+- 🧠 Machine Learning (KNN, Naive Bayes, Logistic Regression, SVM, Random Forest, Gradient Boosting, Isolation Forest)
 - 🔡 NLP pipelines (Tokenization, TF-IDF, Embeddings)
-- ⚡ Vector similarity (Word2Vec, FastText)
+- ⚡ Vector similarity (Word2Vec, FastText, external `.bin`)
 - 🔎 Rule engine (Regex / optional VectorScan)
 - 📊 Hybrid scoring system
 
@@ -136,33 +136,37 @@ The examples below are designed to be:
 
 # 1. YAML Examples
 
+YAML pipelines follow a three-block structure: `data`, `pipeline`, and `model`.
+An optional `extra_match` list attaches rule files to the scoring engine.
+
 ## 📄1.1 KNN + FastText for Spam / Security
 
 A strong default for email classification and noisy text detection.
 
 ```yaml
-method: KnnCosine
-nlp: FastText
+report_name: Spam KNN FastText
 
-k: 5
-threads: 4
+data:
+  hot_test_path: data/email/spam
+  cold_test_path: data/email/normal
+  hot_label: SPAM
+  cold_label: RAW_DATA
+  recursive_way: On
+  score_sum: On
 
-datasets:
-  hot:
-    - /data/email/spam/
-  cold:
-    - /data/email/normal/
+pipeline:
+  nlp: FastText
+  threads: 4
 
-rules:
-  - title: Spam Keywords
-    description: Detect common spam patterns
-    match_rule: "free|bonus|win|casino|urgent"
-    score: 70
+model:
+  method: KnnCosine
+  k: 5
 
-  - title: Suspicious URL
-    description: Detect promotional or deceptive links
-    match_rule: "http://.*(promo|deal|bonus)"
-    score: 80
+extra_match:
+  - engine: Regex
+    path: rules/spam_keywords.txt
+    score_add_points: 20
+    title: Spam keywords
 ```
 
 ### When to use
@@ -178,28 +182,29 @@ rules:
 Useful for request classification, payload similarity, and attack family grouping.
 
 ```yaml
-method: KnnEuclidean
-nlp: Word2Vec
+report_name: Web Attack KNN Word2Vec
 
-k: 3
-threads: 4
+data:
+  hot_test_path: data/http/attacks
+  cold_test_path: data/http/normal
+  hot_label: WEB_ATTACK
+  cold_label: RAW_DATA
+  recursive_way: On
+  score_sum: On
 
-datasets:
-  hot:
-    - /data/http/attacks/
-  cold:
-    - /data/http/normal/
+pipeline:
+  nlp: Word2Vec
+  threads: 4
 
-rules:
-  - title: SQL Injection Pattern
-    description: Common SQLi fragments
-    match_rule: "union select|or 1=1|information_schema"
-    score: 90
+model:
+  method: KnnEuclidean
+  k: 3
 
-  - title: XSS Attempt
-    description: Typical XSS payload markers
-    match_rule: "<script>|alert\(|onerror="
-    score: 85
+extra_match:
+  - engine: Regex
+    path: rules/sqli_xss.txt
+    score_add_points: 25
+    title: SQLi / XSS patterns
 ```
 
 ### When to use
@@ -214,27 +219,22 @@ rules:
 A simple, fast baseline for suspicious transaction narratives and fraud-related documents.
 
 ```yaml
-method: Bayes
-nlp: TfIdf
+report_name: Fraud Bayes TfIdf
 
-threads: 2
+data:
+  hot_test_path: data/fraud/transactions
+  cold_test_path: data/legit/transactions
+  hot_label: ANOMALY
+  cold_label: RAW_DATA
+  recursive_way: On
+  score_sum: Off
 
-datasets:
-  hot:
-    - /data/fraud/transactions/
-  cold:
-    - /data/legit/transactions/
+pipeline:
+  nlp: TfIdf
+  threads: 2
 
-rules:
-  - title: Suspicious Transaction
-    description: Transaction language associated with urgency or manipulation
-    match_rule: "transfer|urgent|wire|immediate"
-    score: 60
-
-  - title: Known Fraud Pattern
-    description: Indicators of laundering, anonymity, or offshore movement
-    match_rule: "offshore|crypto|anonymous|shell company"
-    score: 75
+model:
+  method: Bayes
 ```
 
 ### When to use
@@ -249,28 +249,29 @@ rules:
 A lightweight example for biological text grouping and domain-specific keyword reinforcement.
 
 ```yaml
-method: KnnCosine
-nlp: FastText
+report_name: Biology KNN FastText
 
-k: 4
-threads: 4
+data:
+  hot_test_path: data/bio/virus
+  cold_test_path: data/bio/human
+  hot_label: VIRUS
+  cold_label: HUMAN
+  recursive_way: On
+  score_sum: On
 
-datasets:
-  hot:
-    - /data/bio/virus/
-  cold:
-    - /data/bio/human/
+pipeline:
+  nlp: FastText
+  threads: 4
 
-rules:
-  - title: Virus Signature
-    description: Vocabulary linked to viral sequences and mutations
-    match_rule: "rna|mutation|viral|capsid"
-    score: 80
+model:
+  method: KnnCosine
+  k: 4
 
-  - title: Human Marker
-    description: Terms associated with normal human biological context
-    match_rule: "human tissue|somatic|host response"
-    score: 20
+extra_match:
+  - engine: Regex
+    path: rules/virus_markers.txt
+    score_add_points: 15
+    title: Virus signature keywords
 ```
 
 ### When to use
@@ -285,30 +286,29 @@ rules:
 Example of a richer structured model configuration.
 
 ```yaml
-method: RandomForest
-nlp: FastText
+report_name: Web Attack Random Forest
 
-threads: 8
+data:
+  hot_test_path: data/http/attacks
+  cold_test_path: data/http/normal
+  hot_label: WEB_ATTACK
+  cold_label: RAW_DATA
+  recursive_way: On
+  score_sum: Off
 
-random_forest_mode: ExtraTrees
-random_forest_n_trees: 200
-random_forest_max_depth: null
-random_forest_max_features: sqrt
-random_forest_min_samples_split: 2
-random_forest_min_samples_leaf: 1
-random_forest_bootstrap: true
-random_forest_oob_score: true
+pipeline:
+  nlp: FastText
+  threads: 8
 
-datasets:
-  hot:
-    - /data/http/attacks/
-  cold:
-    - /data/http/normal/
-
-rules:
-  - title: High Risk Attack Rule
-    match_rule: "union select|<script>|../|xp_cmdshell"
-    score: 90
+model:
+  method: RandomForest
+  mode: extra_trees
+  n_trees: 200
+  max_features: sqrt
+  min_samples_split: 2
+  min_samples_leaf: 1
+  bootstrap: true
+  oob_score: true
 ```
 
 ### When to use
@@ -324,26 +324,26 @@ rules:
 A clean example for more advanced text classification.
 
 ```yaml
-method: SVM
-nlp: TfIdf
+report_name: Spam SVM Linear
 
-threads: 4
+data:
+  hot_test_path: data/email/spam
+  cold_test_path: data/email/normal
+  hot_label: SPAM
+  cold_label: RAW_DATA
+  recursive_way: On
+  score_sum: Off
 
-svm_kernel: Linear
-svm_c: 1.0
-svm_learning_rate: 0.01
-svm_epochs: 50
+pipeline:
+  nlp: TfIdf
+  threads: 4
 
-datasets:
-  hot:
-    - /data/email/spam/
-  cold:
-    - /data/email/normal/
-
-rules:
-  - title: Spam Promotion Rule
-    match_rule: "bonus|prize|winner|cash"
-    score: 50
+model:
+  method: Svm
+  kernel: Linear
+  c: 1.0
+  learning_rate: 0.08
+  epochs: 50
 ```
 
 ### Other valid kernels
@@ -359,25 +359,25 @@ rules:
 Good for more structured scoring scenarios.
 
 ```yaml
-method: GradientBoosting
-nlp: TfIdf
+report_name: Fraud Gradient Boosting
 
-threads: 4
+data:
+  hot_test_path: data/fraud/high-risk
+  cold_test_path: data/fraud/low-risk
+  hot_label: ANOMALY
+  cold_label: RAW_DATA
+  recursive_way: On
+  score_sum: Off
 
-gradient_boosting_n_estimators: 100
-gradient_boosting_learning_rate: 0.1
-gradient_boosting_max_depth: 3
+pipeline:
+  nlp: TfIdf
+  threads: 4
 
-datasets:
-  hot:
-    - /data/fraud/high-risk/
-  cold:
-    - /data/fraud/low-risk/
-
-rules:
-  - title: High Risk Pattern
-    match_rule: "urgent transfer|offshore|anonymous wallet"
-    score: 65
+model:
+  method: GradientBoosting
+  n_estimators: 100
+  learning_rate: 0.1
+  max_depth: 3
 ```
 
 ---
@@ -387,25 +387,25 @@ rules:
 Best suited when your main signal is “normal vs strange”.
 
 ```yaml
-method: IsolationForest
-nlp: FastText
+report_name: Anomaly Isolation Forest
 
-threads: 4
+data:
+  hot_test_path: data/anomaly/known_outliers
+  cold_test_path: data/anomaly/normal
+  hot_label: ANOMALY
+  cold_label: RAW_DATA
+  recursive_way: On
+  score_sum: Off
 
-isolation_forest_n_trees: 150
-isolation_forest_contamination: 0.02
-isolation_forest_subsample_size: 256
+pipeline:
+  nlp: FastText
+  threads: 4
 
-datasets:
-  hot:
-    - /data/anomaly/known_outliers/
-  cold:
-    - /data/anomaly/normal/
-
-rules:
-  - title: Rare Pattern
-    match_rule: "unexpected syscall|rare endpoint|unusual payload"
-    score: 40
+model:
+  method: IsolationForest
+  n_trees: 150
+  contamination: 0.02
+  subsample_size: 256
 ```
 
 ---
@@ -415,18 +415,24 @@ rules:
 ## 📄2.1 KNN + FastText
 
 ```rust
-use vec_eyes_lib::{ClassifierFactory, MethodKind, NlpOption};
+use vec_eyes_lib::{
+    ClassifierFactory, ClassifierMethod, ClassificationLabel, NlpOption, ScoreSumMode,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let classifier = ClassifierFactory::new()
-        .method(MethodKind::KnnCosine)
+    let classifier = ClassifierFactory::builder()
+        .method(ClassifierMethod::KnnCosine)
         .nlp(NlpOption::FastText)
-        .k(Some(5))
+        .k(5)
         .threads(Some(4))
+        .hot_path("data/email/spam")
+        .cold_path("data/email/normal")
+        .hot_label(ClassificationLabel::Spam)
+        .cold_label(ClassificationLabel::RawData)
         .build()?;
 
-    let result = classifier.classify_text("claim your free casino bonus now")?;
-    println!("{result:?}");
+    let result = classifier.classify_text("claim your free casino bonus now", ScoreSumMode::Off, &[]);
+    println!("{:?}", result.labels);
 
     Ok(())
 }
@@ -437,17 +443,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## 📄2.2 Bayes + TF-IDF
 
 ```rust
-use vec_eyes_lib::{ClassifierFactory, MethodKind, NlpOption};
+use vec_eyes_lib::{
+    ClassifierFactory, ClassifierMethod, ClassificationLabel, NlpOption, ScoreSumMode,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let classifier = ClassifierFactory::new()
-        .method(MethodKind::Bayes)
+    let classifier = ClassifierFactory::builder()
+        .method(ClassifierMethod::Bayes)
         .nlp(NlpOption::TfIdf)
         .threads(Some(2))
+        .hot_path("data/fraud/hot")
+        .cold_path("data/fraud/cold")
+        .hot_label(ClassificationLabel::Anomaly)
+        .cold_label(ClassificationLabel::RawData)
         .build()?;
 
-    let result = classifier.classify_text("urgent offshore transfer to anonymous account")?;
-    println!("{result:?}");
+    let result = classifier.classify_text("urgent offshore transfer to anonymous account", ScoreSumMode::Off, &[]);
+    println!("{:?}", result.labels);
 
     Ok(())
 }
@@ -459,27 +471,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust
 use vec_eyes_lib::{
-    ClassifierFactory,
-    MethodKind,
-    NlpOption,
-    RandomForestMaxFeatures,
-    RandomForestMode,
+    ClassifierFactory, ClassifierMethod, ClassificationLabel,
+    NlpOption, RandomForestMaxFeatures, RandomForestMode, ScoreSumMode,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let classifier = ClassifierFactory::new()
-        .method(MethodKind::RandomForest)
+    let classifier = ClassifierFactory::builder()
+        .method(ClassifierMethod::RandomForest)
         .nlp(NlpOption::FastText)
         .threads(Some(8))
-        .random_forest_mode(Some(RandomForestMode::ExtraTrees))
-        .random_forest_n_trees(Some(200))
-        .random_forest_max_features(Some(RandomForestMaxFeatures::Sqrt))
-        .random_forest_bootstrap(Some(true))
-        .random_forest_oob_score(Some(true))
+        .hot_path("data/http/attacks")
+        .cold_path("data/http/normal")
+        .hot_label(ClassificationLabel::WebAttack)
+        .cold_label(ClassificationLabel::RawData)
+        .random_forest_full_config(
+            RandomForestMode::ExtraTrees,
+            200,           // n_trees
+            Some(12),      // max_depth
+            Some(RandomForestMaxFeatures::Sqrt),
+            Some(2),       // min_samples_split
+            Some(1),       // min_samples_leaf
+            Some(true),    // bootstrap
+            Some(true),    // oob_score
+        )
         .build()?;
 
-    let result = classifier.classify_text("union select password from users where 1=1")?;
-    println!("{result:?}");
+    let result = classifier.classify_text("union select password from users where 1=1", ScoreSumMode::Off, &[]);
+    println!("{:?}", result.labels);
 
     Ok(())
 }
@@ -487,25 +505,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
-## 📄 2.4 SVM + Explicit Kernel
+## 📄2.4 SVM + Explicit Kernel
 
 ```rust
-use vec_eyes_lib::{ClassifierFactory, MethodKind, NlpOption, SvmKernel};
+use vec_eyes_lib::{
+    ClassifierFactory, ClassifierMethod, ClassificationLabel,
+    NlpOption, ScoreSumMode, SvmConfig, SvmKernel,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let classifier = ClassifierFactory::new()
-        .method(MethodKind::SVM)
+    let classifier = ClassifierFactory::builder()
+        .method(ClassifierMethod::Svm)
         .nlp(NlpOption::TfIdf)
         .threads(Some(4))
-        .svm_kernel(Some(SvmKernel::Linear))
-        .svm_c(Some(1.0))
-        .svm_learning_rate(Some(0.01))
-        .svm_epochs(Some(50))
+        .hot_path("data/email/spam")
+        .cold_path("data/email/normal")
+        .hot_label(ClassificationLabel::Spam)
+        .cold_label(ClassificationLabel::RawData)
+        .svm_config(SvmConfig {
+            kernel: SvmKernel::Linear,
+            c: 1.0,
+            learning_rate: 0.08,
+            epochs: 50,
+            ..Default::default()
+        })
         .build()?;
 
-    let result = classifier.classify_text("win cash now bonus offer")?;
-    println!("{result:?}");
+    let result = classifier.classify_text("win cash now bonus offer", ScoreSumMode::Off, &[]);
+    println!("{:?}", result.labels);
 
+    Ok(())
+}
+```
+
+---
+
+## 📄2.5 YAML pipeline (load and run)
+
+```rust
+use vec_eyes_lib::{classifier::run_rules_pipeline, config::RulesFile};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let rules = RulesFile::from_yaml_path("pipeline.yaml")?;
+    let report = run_rules_pipeline(&rules, std::path::Path::new("data/classify"))?;
+    report.write_json("output/report.json")?;
+    println!("Classified {} files", report.records.len());
     Ok(())
 }
 ```
@@ -514,31 +558,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Compatibility Matrix
 
-The matrix below is designed to make Vec-Eyes easier to understand and safer to configure. It summarizes what each classifier is best at, which NLP representations fit best, which parameters are required, and which non-trivial parameters strongly affect results.
+The matrix below summarises what each classifier is best at, which NLP representations fit, which `model:` parameters are required in YAML, and which non-trivial parameters strongly affect results.
 
-| Classifier | Best NLP / Feature Input | Required Parameters | Important Non-Trivial Parameters | Best Use Cases | Notes |
+| Classifier (`method:`) | Best NLP | Required params | Important optional params | Best Use Cases | Notes |
 |---|---|---|---|---|---|
-| **Bayes** | `Count`, `TfIdf` | None | `threads` | Spam detection, fast baseline text classification, simple fraud text screening | Very fast and stable. Best as a baseline. Not ideal for dense embeddings like Word2Vec/FastText. |
-| **KnnCosine** | `FastText`, `Word2Vec` | `k` | `threads` | Similarity-based classification, noisy text, phishing, behavioral text matching | Strong default for embedding-based text classification. Cosine is usually the best first KNN metric for dense vectors. |
-| **KnnEuclidean** | `FastText`, `Word2Vec` | `k` | `threads` | Distance-based embedding experiments, attack clustering | More sensitive to magnitude than cosine. Useful for controlled experiments. |
-| **KnnManhattan** | `FastText`, `Word2Vec` | `k` | `threads` | Alternative distance profile for embeddings | Often used for experimentation rather than as the default production KNN choice. |
-| **KnnMinkowski** | `FastText`, `Word2Vec` | `k`, `p` | `threads` | Research-style distance tuning, anomaly/similarity experiments | `p` changes the geometry of distance. Use only when you explicitly want to tune distance behavior. |
-| **LogisticRegression** | `TfIdf`, `Count`, sometimes dense embeddings | `logistic_learning_rate`, `logistic_epochs` | `logistic_lambda`, `threads` | Fraud classification, text classification, strong production baseline | Great balance between interpretability, speed, and quality. Very practical model. |
-| **SVM** | `TfIdf`, `Count`, sometimes dense embeddings | `svm_kernel`, `svm_c` | `svm_learning_rate`, `svm_epochs`, `svm_gamma`, `svm_degree`, `svm_coef0`, `threads` | Security text classification, spam, fraud, web attack text | `Linear` is usually the best first choice. `Rbf` is more expressive but more sensitive to tuning. |
-| **RandomForest** | `TfIdf`, `FastText`, structured-ish feature sets | `random_forest_n_trees` | `random_forest_mode`, `random_forest_max_depth`, `random_forest_max_features`, `random_forest_min_samples_split`, `random_forest_min_samples_leaf`, `random_forest_bootstrap`, `random_forest_oob_score`, `threads` | Richer risk scoring, structured features, fraud, mixed-signal classification | Good when you want ensembles and model diversity. Supports `Standard`, `Balanced`, and `ExtraTrees`. |
-| **GradientBoosting** | `TfIdf`, structured-ish feature sets | `gradient_boosting_n_estimators`, `gradient_boosting_learning_rate` | `gradient_boosting_max_depth`, `threads` | Fraud/risk scoring, more expressive tabular-like classification | More sensitive to hyperparameters than Bayes or Logistic Regression. |
-| **IsolationForest** | `FastText`, `Word2Vec`, anomaly-oriented feature sets | `isolation_forest_n_trees`, `isolation_forest_contamination` | `isolation_forest_subsample_size`, `threads` | Anomaly detection, unusual behavior detection, outlier hunting | Best when the goal is finding what looks abnormal rather than choosing among many known labels. |
+| **Bayes** | `Count`, `TfIdf` | — | `threads` | Spam, fast baseline, fraud text screening | Very fast and stable. Best as a first baseline. |
+| **KnnCosine** | `FastText`, `Word2Vec` | `k` | `threads` | Phishing, noisy text, behavioral matching | Best default KNN metric for dense embeddings. |
+| **KnnEuclidean** | `FastText`, `Word2Vec` | `k` | `threads` | Attack clustering, distance-based experiments | More magnitude-sensitive than cosine. |
+| **KnnManhattan** | `FastText`, `Word2Vec` | `k` | `threads` | Alternative distance profile | Useful for experimentation. |
+| **KnnMinkowski** | `FastText`, `Word2Vec` | `k`, `p` | `threads` | Distance geometry tuning | `p=2` ≡ Euclidean; `p=1` ≡ Manhattan. |
+| **LogisticRegression** | `TfIdf`, `Count`, dense | `learning_rate`, `epochs` | `lambda`, `threads` | Fraud, text classification | Strong production baseline; interpretable. |
+| **Svm** | `TfIdf`, `Count`, dense | `kernel`, `c` | `learning_rate`, `epochs`, `gamma`, `degree`, `coef0`, `threads` | Security, spam, web attacks | `Linear` first; `Rbf` for non-linear separation. |
+| **RandomForest** | `TfIdf`, `FastText`, dense | `n_trees` | `mode`, `max_depth`, `max_features`, `min_samples_split`, `min_samples_leaf`, `bootstrap`, `oob_score`, `threads` | Mixed-signal classification, risk scoring | Supports `Standard`, `Balanced`, `ExtraTrees`. |
+| **GradientBoosting** | `TfIdf`, dense | `n_estimators`, `learning_rate` | `max_depth`, `threads` | Fraud/risk scoring | More sensitive to tuning than RF or Bayes. |
+| **IsolationForest** | Any (`TfIdf`, `FastText`, `Word2Vec`, …) | `n_trees`, `contamination` | `subsample_size`, `threads` | Anomaly detection, outlier hunting | Goal is "normal vs strange", not multi-class. |
 
 ---
 
 
 ## 🧠 How Dataset Loading Works
 
-- `hot` directories → labeled as target class
-- `cold` directories → baseline / normal behavior
-- All files are read **recursively**
-- Multiple directories supported
-- Each file contributes to training vectors
+- `hot_test_path` → target class (e.g. spam, attacks, virus)
+- `cold_test_path` → baseline / normal class
+- `recursive_way: On` reads sub-directories recursively
+- Each `.txt` file is one training sample
+- Streaming iterator available via `training_sample_iter()` for large corpora
 
 ---
 
@@ -565,21 +609,34 @@ cargo build --features vectorscan
 
 ## ⚙️ Supported Methods
 
-- KnnCosine
-- KnnEuclidean
-- KnnManhattan
-- KnnMinkowski (requires `p`)
-- Bayes
+| Method | YAML `method:` value |
+|---|---|
+| K-Nearest Neighbours (Cosine) | `KnnCosine` |
+| K-Nearest Neighbours (Euclidean) | `KnnEuclidean` |
+| K-Nearest Neighbours (Manhattan) | `KnnManhattan` |
+| K-Nearest Neighbours (Minkowski) | `KnnMinkowski` |
+| Naive Bayes | `Bayes` |
+| Logistic Regression | `LogisticRegression` |
+| Support Vector Machine | `Svm` |
+| Random Forest | `RandomForest` |
+| Gradient Boosting | `GradientBoosting` |
+| Isolation Forest | `IsolationForest` |
 
 ---
 
 ## ⚠️ Validation Rules
 
-- KNN requires `k`
-- Minkowski requires `p`
-- Bayes does not require extra parameters
-- YAML is validated before execution
-...
+- KNN variants require `k ≥ 1`
+- `KnnMinkowski` additionally requires `p > 0`
+- `LogisticRegression` requires `learning_rate` and `epochs`
+- `Svm` requires `kernel` and `c`
+- `GradientBoosting` requires `n_estimators` and `learning_rate`
+- `IsolationForest` requires `n_trees` and `contamination` (in `(0, 0.5)`)
+- `RandomForest` with `oob_score: true` requires `bootstrap: true`
+- `threads: 0` is rejected
+- Output paths containing `..` are rejected (path-traversal guard)
+- All validation runs before any training or file I/O
+
 ---
 
 ## ⚡ Performance
@@ -592,16 +649,45 @@ cargo build --features vectorscan
 
 ## 🧩 Embedding in Your Project
 
+Add to `Cargo.toml`:
+
+```toml
+[dependencies]
+vec-eyes-lib = { path = "../vec-eyes-lib" }
+# or once published:
+# vec-eyes-lib = "3.2.0"
+```
+
+Minimal classifier:
+
 ```rust
-use vec_eyes_core::*;
+use vec_eyes_lib::{
+    ClassifierFactory, ClassifierMethod, ClassificationLabel, NlpOption, ScoreSumMode,
+};
 
-let classifier = build_classifier(...)
-    .with_method(MethodKind::KnnCosine { k: 5 })
-    .with_nlp(NlpOption::FastText)
-    .load_rules("rules.yaml")
-    .train(datasets)?;
+let classifier = ClassifierFactory::builder()
+    .method(ClassifierMethod::KnnCosine)
+    .nlp(NlpOption::FastText)
+    .k(5)
+    .hot_path("data/hot")
+    .cold_path("data/cold")
+    .hot_label(ClassificationLabel::Spam)
+    .cold_label(ClassificationLabel::RawData)
+    .build()?;
 
-let result = classifier.classify("input data");
+let result = classifier.classify_text("free prize click here", ScoreSumMode::Off, &[]);
+let top = result.labels.first();
+println!("{top:?}");
+```
+
+YAML pipeline:
+
+```rust
+use vec_eyes_lib::{classifier::run_rules_pipeline, config::RulesFile};
+
+let rules = RulesFile::from_yaml_path("pipeline.yaml")?;
+let report = run_rules_pipeline(&rules, std::path::Path::new("data/classify"))?;
+report.write_json("report.json")?;
 ```
 
 ---

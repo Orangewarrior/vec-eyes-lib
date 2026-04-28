@@ -1,10 +1,16 @@
 report_name: Invalid Missing K
-method: KnnCosine
-nlp: FastText
-threads: 1
-recursive_way: On
-hot_test_path: tests/data/biology/hot
-cold_test_path: tests/data/biology/cold
-hot_label: VIRUS
-cold_label: HUMAN
-score_sum: Off
+
+data:
+  hot_test_path: tests/data/biology/hot
+  cold_test_path: tests/data/biology/cold
+  hot_label: VIRUS
+  cold_label: HUMAN
+  recursive_way: On
+  score_sum: Off
+
+pipeline:
+  nlp: FastText
+  threads: 1
+
+model:
+  method: KnnCosine

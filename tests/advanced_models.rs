@@ -23,7 +23,7 @@ fn yaml_parses_new_methods() {
         "tests/data/rules/fraud_isolation_forest.yaml",
     ] {
         let rules = RulesFile::from_yaml_path(path).unwrap();
-        assert!(!rules.method.is_knn(), "{path} should not be treated as knn");
+        assert!(!rules.model.method_kind().is_knn(), "{path} should not be treated as knn");
     }
 }
 
@@ -224,6 +224,23 @@ fn random_forest_oob_yaml_is_accepted_and_trains_real_oob_score() {
     let mut cold = load_training_samples(Path::new("tests/data/uci_sms/cold"), ClassificationLabel::RawData, true).unwrap();
     samples.append(&mut cold);
 
+    let rf_config = match &rules.model {
+        vec_eyes_lib::config::ModelConfig::RandomForest {
+            mode, n_trees, max_depth, max_features,
+            min_samples_split, min_samples_leaf, bootstrap, oob_score, random_seed,
+        } => vec_eyes_lib::advanced_models::RandomForestConfig {
+            mode: mode.clone(),
+            n_trees: *n_trees,
+            max_depth: *max_depth,
+            max_features: max_features.clone(),
+            min_samples_split: *min_samples_split,
+            min_samples_leaf: *min_samples_leaf,
+            bootstrap: *bootstrap,
+            oob_score: *oob_score,
+            random_seed: *random_seed,
+        },
+        _ => panic!("expected RandomForest model config"),
+    };
     let classifier = AdvancedClassifier::train(
         AdvancedMethod::RandomForest,
         &samples,
@@ -231,17 +248,7 @@ fn random_forest_oob_yaml_is_accepted_and_trains_real_oob_score() {
         ClassificationLabel::Spam,
         ClassificationLabel::RawData,
         &vec_eyes_lib::advanced_models::AdvancedModelConfig {
-            random_forest: Some(vec_eyes_lib::advanced_models::RandomForestConfig {
-                mode: rules.random_forest_mode.clone().unwrap(),
-                n_trees: rules.random_forest_n_trees.unwrap(),
-                max_depth: rules.random_forest_max_depth.unwrap_or(6),
-                max_features: rules.random_forest_max_features.clone().unwrap(),
-                min_samples_split: rules.random_forest_min_samples_split.unwrap_or(2),
-                min_samples_leaf: rules.random_forest_min_samples_leaf.unwrap_or(1),
-                bootstrap: rules.random_forest_bootstrap.unwrap_or(true),
-                oob_score: rules.random_forest_oob_score.unwrap_or(false),
-                random_seed: rules.random_forest_seed,
-            }),
+            random_forest: Some(rf_config),
             ..Default::default()
         },
     ).unwrap();

@@ -229,7 +229,7 @@ let classifier = GradientBoostingClassifier::load_bincode("models/gb_fraud.bin")
 
 ## IsolationForestClassifier
 
-IsolationForest is an anomaly detector. It requires dense embeddings (`Word2Vec` or `FastText`) and explicit `hot_label` / `cold_label` parameters that indicate which class is the anomaly.
+IsolationForest is an anomaly detector. It accepts any NLP option and requires explicit `hot_label` / `cold_label` parameters that indicate which class is the anomaly.
 
 ```rust
 use vec_eyes_lib::{
@@ -748,7 +748,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = RandomForestConfig {
         n_trees: 150,
-        max_depth: Some(12),
+        max_depth: 12,
         ..Default::default()
     };
 

@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.2.0] - 2026-04-28
+
+### Changed
+
+#### `RulesFile` refactored into sub-configs (`src/config.rs`)
+
+The flat ~40-field `RulesFile` struct has been replaced with a nested design that groups related settings:
+
+- **`DataConfig`** — training data paths, labels, recursive mode, score-sum mode
+- **`PipelineConfig`** — NLP option, threads, embedding dimensions, security normalization flag
+- **`ModelConfig`** — internally-tagged serde enum (`#[serde(tag = "method")]`); one variant per classifier, holding only the fields that variant needs
+
+Old flat YAML format:
+```yaml
+method: RandomForest
+nlp: TfIdf
+hot_test_path: data/hot
+cold_test_path: data/cold
+random_forest_n_trees: 51
+random_forest_max_depth: 8
+```
+
+New nested YAML format:
+```yaml
+data:
+  hot_test_path: data/hot
+  cold_test_path: data/cold
+  recursive_way: On
+  score_sum: Off
+
+pipeline:
+  nlp: TfIdf
+
+model:
+  method: RandomForest
+  n_trees: 51
+  max_depth: 8
+```
+
+All 35 YAML test fixtures updated. `ModelConfig`, `DataConfig`, and `PipelineConfig` are re-exported from `vec_eyes_lib`.
+
+### Added
+
+#### `EnsembleStrategy` enum (`src/classifier.rs`)
+
+`EnsembleClassifier` now supports two combination strategies:
+
+- **`WeightedAverage`** (default) — sums weighted probabilities across classifiers, normalises by total weight; produces intuitive linear mixtures
+- **`ProductOfExperts`** — accumulates weighted log-probabilities then applies softmax; mathematically principled but sharper (more extreme) than linear averaging
+
+Builder method: `EnsembleClassifier::with_strategy(EnsembleStrategy::ProductOfExperts)`.
+
+#### Streaming dataset iterator (`src/dataset.rs`)
+
+New `training_sample_iter(path, label, recursive)` returns a lazy `impl Iterator<Item = Result<TrainingSample, VecEyesError>>`. Reading a 10 GB directory no longer requires collecting all samples into memory before training begins. `load_training_samples` now delegates to this iterator.
+
+#### Model versioning for save/load (`src/advanced_models.rs`)
+
+- **JSON**: `VersionedJsonRef` / `VersionedJsonOwned` wrapper types inject a `"version": 1` field into serialised JSON. Files without a version field are treated as version 0 (legacy) and loaded without error.
+- **Bincode**: `VersionedBincode { version: u32, classifier }` wrapper. Old unversioned bincode files now fail with a clear "please retrain" error instead of a panic.
+
+#### Label validation in `ClassificationLabel::from_str` (`src/labels.rs`)
+
+`from_str` now rejects empty strings, labels longer than 64 characters, and labels containing control characters, returning a `&'static str` error message instead of the previous `()`.
+
+### Fixed
+
+#### Path traversal guard for report output (`src/report.rs`)
+
+`ClassificationReport::write_csv` and `write_json` now call `security::sanitize_output_path` before opening the file, rejecting any path that contains `..` components.
+
+#### `IsolationForest` NLP restriction removed (`src/advanced_models.rs`)
+
+`IsolationForestClassifier::train` previously rejected `NlpOption::TfIdf` and `NlpOption::Count`. That restriction has been lifted; all NLP options now work with IsolationForest.
+
+### Performance
+
+#### Rayon parallelism throughout classifier cores
+
+- `IsolationForest::predict_scores` — per-tree path-length accumulation is now parallel via `rayon::par_iter`
+- `RandomForest::predict_scores` — vote accumulation is parallel; per-tree feature-importance updates use `zip().for_each()` instead of indexed loops
+- `GradientBoosting::fit_regression_stump` — best-split search across features is parallel
+- `SVM Landmark.transform` — row-wise landmark projection now uses `axis_iter_mut().into_par_iter()`
+- `AdvancedClassifier::transform_count` — row-wise embedding construction is parallel; L2 normalisation is inlined via `mapv_inplace`
+
+#### Lower-contention thread-pool cache (`src/parallel.rs`)
+
+Replaced `Mutex<HashMap<usize, Arc<ThreadPool>>>` with a `RwLock` double-check pattern: threads that request an already-cached pool size take the read path without ever acquiring an exclusive lock.
+
+---
+
 ## [3.1.0] - 2026-04-27
 
 ### Added

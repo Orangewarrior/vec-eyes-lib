@@ -1079,7 +1079,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = RandomForestConfig {
         n_trees: 150,
-        max_depth: Some(12),
+        max_depth: 12,
         ..Default::default()
     };
 
@@ -1267,7 +1267,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rf_w2v = RandomForestClassifier::train_with_external_embeddings(
         &samples,
         w2v_emb.clone(),
-        RandomForestConfig { n_trees: 100, max_depth: Some(10), ..Default::default() },
+        RandomForestConfig { n_trees: 100, max_depth: 10, ..Default::default() },
         None,
     )?;
 

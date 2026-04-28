@@ -1,13 +1,19 @@
 report_name: bad rf
-method: RandomForest
-nlp: TfIdf
-recursive_way: ON
-hot_test_path: tests/data/uci_sms/hot
-cold_test_path: tests/data/uci_sms/cold
-hot_label: SPAM
-cold_label: RAW_DATA
-score_sum: OFF
-random_forest_n_trees: 10
-random_forest_mode: standard
-random_forest_bootstrap: false
-random_forest_oob_score: true
+
+data:
+  hot_test_path: tests/data/uci_sms/hot
+  cold_test_path: tests/data/uci_sms/cold
+  hot_label: SPAM
+  cold_label: RAW_DATA
+  recursive_way: ON
+  score_sum: OFF
+
+pipeline:
+  nlp: TfIdf
+
+model:
+  method: RandomForest
+  n_trees: 10
+  mode: standard
+  bootstrap: false
+  oob_score: true

@@ -1,14 +1,19 @@
 report_name: UCI Biology
-method: Svm
-nlp: TfIdf
-recursive_way: ON
-hot_test_path: tests/data/uci_biology/hot
-cold_test_path: tests/data/uci_biology/cold
-hot_label: VIRUS
-cold_label: HUMAN
-score_sum: OFF
 
-svm_kernel: Linear
-svm_c: 1.0
-svm_learning_rate: 0.08
-svm_epochs: 45
+data:
+  hot_test_path: tests/data/uci_biology/hot
+  cold_test_path: tests/data/uci_biology/cold
+  hot_label: VIRUS
+  cold_label: HUMAN
+  recursive_way: ON
+  score_sum: OFF
+
+pipeline:
+  nlp: TfIdf
+
+model:
+  method: Svm
+  kernel: Linear
+  c: 1.0
+  learning_rate: 0.08
+  epochs: 45

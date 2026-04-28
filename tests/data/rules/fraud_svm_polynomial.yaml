@@ -1,16 +1,22 @@
 report_name: UCI Fraud Polynomial SVM
-method: Svm
-nlp: TfIdf
-recursive_way: ON
-hot_test_path: tests/data/uci_fraud/hot
-cold_test_path: tests/data/uci_fraud/cold
-hot_label: ANOMALY
-cold_label: RAW_DATA
-score_sum: OFF
-svm_kernel: Polynomial
-svm_c: 1.3
-svm_learning_rate: 0.07
-svm_epochs: 55
-svm_gamma: 0.40
-svm_degree: 3
-svm_coef0: 0.5
+
+data:
+  hot_test_path: tests/data/uci_fraud/hot
+  cold_test_path: tests/data/uci_fraud/cold
+  hot_label: ANOMALY
+  cold_label: RAW_DATA
+  recursive_way: ON
+  score_sum: OFF
+
+pipeline:
+  nlp: TfIdf
+
+model:
+  method: Svm
+  kernel: Polynomial
+  c: 1.3
+  learning_rate: 0.07
+  epochs: 55
+  gamma: 0.40
+  degree: 3
+  coef0: 0.5

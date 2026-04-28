@@ -1,10 +1,16 @@
 report_name: Fraud Bayes Count
-method: Bayes
-nlp: Count
-threads: 1
-recursive_way: On
-hot_test_path: tests/data/fraud/hot
-cold_test_path: tests/data/fraud/cold
-hot_label: ANOMALY
-cold_label: RAW_DATA
-score_sum: Off
+
+data:
+  hot_test_path: tests/data/fraud/hot
+  cold_test_path: tests/data/fraud/cold
+  hot_label: ANOMALY
+  cold_label: RAW_DATA
+  recursive_way: On
+  score_sum: Off
+
+pipeline:
+  nlp: Count
+  threads: 1
+
+model:
+  method: Bayes

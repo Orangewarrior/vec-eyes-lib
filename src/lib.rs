@@ -64,7 +64,8 @@ pub use advanced_models::{
     RandomForestClassifier, SvmClassifier,
 };
 pub use config::{
-    ExtraMatchConfig, ExtraMatchEngine, RecursiveMode, RulesFile, ScoreSumMode,
+    DataConfig, ExtraMatchConfig, ExtraMatchEngine, ModelConfig, PipelineConfig,
+    RecursiveMode, RulesFile, ScoreSumMode,
 };
 pub use dataset::{collect_files_recursively, load_training_samples, read_text_file, training_sample_iter};
 pub use error::VecEyesError;

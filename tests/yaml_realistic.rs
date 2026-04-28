@@ -37,10 +37,10 @@ fn assert_any_rule_matched(report: &vec_eyes_lib::report::ClassificationReport) 
 #[test]
 fn parses_real_yaml_file_and_validates_knn_requirements() {
     let rules = RulesFile::from_yaml_path("tests/data/rules/web_knn_fasttext_cosine.yaml").unwrap();
-    assert!(rules.method.is_knn());
-    assert_eq!(rules.k, Some(3));
-    assert_eq!(rules.hot_label, Some(ClassificationLabel::WebAttack));
-    assert_eq!(rules.cold_label, Some(ClassificationLabel::RawData));
+    assert!(rules.model.method_kind().is_knn());
+    assert!(matches!(rules.model, vec_eyes_lib::config::ModelConfig::KnnCosine { k: 3 }));
+    assert_eq!(rules.data.hot_label, Some(ClassificationLabel::WebAttack));
+    assert_eq!(rules.data.cold_label, Some(ClassificationLabel::RawData));
     assert_eq!(rules.extra_match.len(), 1);
 
     let invalid = RulesFile::from_yaml_path("tests/data/rules/invalid_missing_k.yaml");

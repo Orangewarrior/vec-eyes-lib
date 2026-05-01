@@ -28,4 +28,6 @@ impl RandomForestModule {
     }
 }
 
-pub use crate::advanced_models::{RandomForestConfig as Config, RandomForestMaxFeatures, RandomForestMode};
+pub use crate::advanced_models::{
+    RandomForestConfig as Config, RandomForestMaxFeatures, RandomForestMode,
+};

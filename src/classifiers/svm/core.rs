@@ -3,10 +3,10 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 use crate::advanced_models::{LabelEncoder, SvmConfig, SvmKernel};
-use crate::math::softmax_scores;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
+use crate::math::softmax_scores;
 use crate::nlp::DenseMatrix;
 use crate::parallel::install_pool;
 
@@ -20,7 +20,11 @@ enum KernelMap {
     Identity,
     /// RBF via Random Fourier Features (Rahimi & Recht 2007).
     /// ω ~ N(0, 2γ·I), b ~ U(0, 2π), φ(x) = √(2/D) cos(ωᵀx + b).
-    Rff { weights: Array2<f32>, biases: Vec<f32>, scale: f32 },
+    Rff {
+        weights: Array2<f32>,
+        biases: Vec<f32>,
+        scale: f32,
+    },
     /// Polynomial / Sigmoid — explicit kernel against random landmarks.
     Landmark(Array2<f32>),
 }
@@ -29,8 +33,8 @@ impl KernelMap {
     fn build(matrix: &DenseMatrix, config: &SvmConfig) -> Self {
         match config.kernel {
             SvmKernel::Linear => Self::Identity,
-            SvmKernel::Rbf   => Self::build_rff(matrix.shape()[1], N_COMPONENTS, config.gamma),
-            _                => Self::build_landmarks(matrix, config),
+            SvmKernel::Rbf => Self::build_rff(matrix.shape()[1], N_COMPONENTS, config.gamma),
+            _ => Self::build_landmarks(matrix, config),
         }
     }
 
@@ -49,13 +53,17 @@ impl KernelMap {
             biases.push(rng.random_range(0.0f32..std::f32::consts::TAU));
         }
         let scale = (2.0 / n_components as f32).sqrt();
-        Self::Rff { weights, biases, scale }
+        Self::Rff {
+            weights,
+            biases,
+            scale,
+        }
     }
 
     fn build_landmarks(matrix: &DenseMatrix, config: &SvmConfig) -> Self {
         let rows = matrix.shape()[0];
         let cols = matrix.shape()[1];
-        let keep = rows.min(MAX_LANDMARKS).max(1);
+        let keep = rows.clamp(1, MAX_LANDMARKS);
         let mut rng = StdRng::seed_from_u64(0xA9D_CAFE);
         let mut indices: Vec<usize> = (0..rows).collect();
         indices.shuffle(&mut rng);
@@ -72,7 +80,11 @@ impl KernelMap {
         match self {
             Self::Identity => matrix.clone(),
 
-            Self::Rff { weights, biases, scale } => {
+            Self::Rff {
+                weights,
+                biases,
+                scale,
+            } => {
                 // (N, D) @ (K, D)ᵀ → (N, K): one BLAS dgemm call when the
                 // `blas` feature is enabled; LLVM-vectorised otherwise.
                 let mut mapped = matrix.dot(&weights.t());
@@ -99,7 +111,8 @@ impl KernelMap {
                         let lhs_slice = lhs.as_slice().unwrap_or(&[]);
                         for col in 0..n_lm {
                             let rhs = ref_matrix.row(col);
-                            out_row[col] = explicit_kernel(lhs_slice, rhs.as_slice().unwrap_or(&[]), config);
+                            out_row[col] =
+                                explicit_kernel(lhs_slice, rhs.as_slice().unwrap_or(&[]), config);
                         }
                     });
                 mapped
@@ -112,8 +125,8 @@ fn explicit_kernel(lhs: &[f32], rhs: &[f32], config: &SvmConfig) -> f32 {
     let dot: f32 = lhs.iter().zip(rhs.iter()).map(|(a, b)| a * b).sum();
     match config.kernel {
         SvmKernel::Polynomial => (config.gamma * dot + config.coef0).powi(config.degree as i32),
-        SvmKernel::Sigmoid    => (config.gamma * dot + config.coef0).tanh(),
-        _                     => dot,
+        SvmKernel::Sigmoid => (config.gamma * dot + config.coef0).tanh(),
+        _ => dot,
     }
 }
 
@@ -155,8 +168,12 @@ impl LinearSvmOVR {
                     for epoch in 0..config.epochs {
                         let local_lr = config.learning_rate / (1.0 + epoch as f32 * 0.05);
                         let decay = 1.0 - local_lr * lambda;
-                        for row in 0..x.shape()[0] {
-                            let y = if y_idx[row] == class_id { 1.0f32 } else { -1.0f32 };
+                        for (row, &target_class) in y_idx.iter().enumerate().take(x.shape()[0]) {
+                            let y = if target_class == class_id {
+                                1.0f32
+                            } else {
+                                -1.0f32
+                            };
                             let x_row = x.row(row);
                             // sdot: BLAS or LLVM auto-vec
                             let margin = b + w.dot(&x_row);
@@ -180,7 +197,13 @@ impl LinearSvmOVR {
             weights.row_mut(class_id).assign(&w);
             bias[class_id] = b;
         }
-        Ok(Self { weights, bias, encoder, config: config.clone(), kernel_map })
+        Ok(Self {
+            weights,
+            bias,
+            encoder,
+            config: config.clone(),
+            kernel_map,
+        })
     }
 
     pub(crate) fn predict_scores(&self, probe: &DenseMatrix) -> Vec<(ClassificationLabel, f32)> {

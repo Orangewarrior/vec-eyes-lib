@@ -3,8 +3,8 @@
 //! This module keeps the public construction flow explicit and stable:
 //! choose a method, configure NLP, load datasets, and build a classifier.
 
-pub mod typed;
 pub mod spec;
+pub mod typed;
 
 pub use crate::classifier::{
     BayesBuilder, ClassifierBuilder, ClassifierFactory, ClassifierMethod, DistanceMetric,
@@ -19,5 +19,5 @@ pub fn builder_from_rules(rules: &RulesFile) -> ClassifierBuilder {
     ClassifierFactory::builder().from_rules_file(rules)
 }
 
-pub use typed::TypedClassifierBuilder;
 pub use spec::{AdvancedSpec, BayesSpec, ClassifierSpec, KnnSpec};
+pub use typed::TypedClassifierBuilder;

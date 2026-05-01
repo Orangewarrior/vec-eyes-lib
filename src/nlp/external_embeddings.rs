@@ -21,9 +21,9 @@
 //! )?;
 //! ```
 
-use crate::nlp::{DenseMatrix, TfIdfModel};
 use crate::nlp::fasttext_bin::FastTextEmbeddings;
 use crate::nlp::word2vec_bin::Word2VecEmbeddings;
+use crate::nlp::{DenseMatrix, TfIdfModel};
 
 /// Unified external-embeddings wrapper.
 ///
@@ -49,7 +49,10 @@ impl ExternalEmbeddings {
     }
 
     /// Persist to a single bincode file for fast reloads.
-    pub fn save_bincode<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), crate::error::VecEyesError> {
+    pub fn save_bincode<P: AsRef<std::path::Path>>(
+        &self,
+        path: P,
+    ) -> Result<(), crate::error::VecEyesError> {
         let bytes = bincode::serialize(self)
             .map_err(|e| crate::error::VecEyesError::Serialization(e.to_string()))?;
         std::fs::write(path, bytes)?;
@@ -57,10 +60,23 @@ impl ExternalEmbeddings {
     }
 
     /// Load from a bincode file produced by [`save_bincode`](ExternalEmbeddings::save_bincode).
-    pub fn load_bincode<P: AsRef<std::path::Path>>(path: P) -> Result<Self, crate::error::VecEyesError> {
-        let bytes = std::fs::read(path)?;
-        bincode::deserialize(&bytes)
-            .map_err(|e| crate::error::VecEyesError::Serialization(e.to_string()))
+    pub fn load_bincode<P: AsRef<std::path::Path>>(
+        path: P,
+    ) -> Result<Self, crate::error::VecEyesError> {
+        let bytes = crate::security::read_file_limited(
+            path.as_ref(),
+            crate::security::DEFAULT_MAX_MODEL_BYTES,
+            "ExternalEmbeddings::load_bincode",
+        )?;
+        let embeddings: Self = bincode::deserialize(&bytes)
+            .map_err(|e| crate::error::VecEyesError::Serialization(e.to_string()))?;
+        if embeddings.dims() == 0 {
+            return Err(crate::error::VecEyesError::invalid_config(
+                "ExternalEmbeddings::load_bincode",
+                "embedding dimensions must be >= 1",
+            ));
+        }
+        Ok(embeddings)
     }
 }
 
@@ -74,11 +90,7 @@ pub fn embed_external<S: AsRef<str>>(
     idf: Option<&TfIdfModel>,
 ) -> DenseMatrix {
     match embeddings {
-        ExternalEmbeddings::FastText(ft) => {
-            crate::nlp::fasttext_bin::embed_texts(ft, texts, idf)
-        }
-        ExternalEmbeddings::Word2Vec(w2v) => {
-            crate::nlp::word2vec_bin::embed_texts(w2v, texts, idf)
-        }
+        ExternalEmbeddings::FastText(ft) => crate::nlp::fasttext_bin::embed_texts(ft, texts, idf),
+        ExternalEmbeddings::Word2Vec(w2v) => crate::nlp::word2vec_bin::embed_texts(w2v, texts, idf),
     }
 }

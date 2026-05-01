@@ -1,112 +1,206 @@
 use rayon::prelude::*;
 
 use crate::advanced_models::LabelEncoder;
-use crate::math::softmax_scores;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
+use crate::math::softmax_scores;
 use crate::nlp::DenseMatrix;
 use crate::parallel::install_pool;
 
+const MAX_SPLIT_CANDIDATES: usize = 32;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct RegStump {
+enum RegTree {
+    Leaf(f32),
+    Split {
+        feature: usize,
+        threshold: f32,
+        left: Box<RegTree>,
+        right: Box<RegTree>,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct SplitCandidate {
     feature: usize,
     threshold: f32,
     left_value: f32,
     right_value: f32,
+    loss: f32,
 }
 
-impl RegStump {
+impl RegTree {
     #[inline(always)]
-    fn predict(&self, xv: f32) -> f32 {
-        if xv <= self.threshold { self.left_value } else { self.right_value }
+    fn predict(&self, row: &[f32]) -> f32 {
+        match self {
+            Self::Leaf(value) => *value,
+            Self::Split {
+                feature,
+                threshold,
+                left,
+                right,
+            } => {
+                if row.get(*feature).copied().unwrap_or_default() <= *threshold {
+                    left.predict(row)
+                } else {
+                    right.predict(row)
+                }
+            }
+        }
     }
 }
 
-/// Regression stump fitted via sorted quantile midpoints (≤ 32 per feature).
-///
-/// Extracting each feature column into a contiguous `Vec<f32>` before scanning
-/// converts the otherwise stride-D memory access pattern of row-major ndarray
-/// into a sequential scan, enabling hardware prefetching and SIMD auto-vec.
-fn fit_regression_stump(x: &DenseMatrix, residual: &[f32]) -> RegStump {
-    let rows = x.shape()[0];
+fn mean_leaf(residual: &[f32], rows: &[usize]) -> f32 {
+    if rows.is_empty() {
+        return 0.0;
+    }
+    let sum: f32 = rows.iter().map(|&row| residual[row]).sum();
+    sum / rows.len() as f32
+}
+
+fn candidate_thresholds(x: &DenseMatrix, rows: &[usize], feature: usize) -> Vec<f32> {
+    let mut values: Vec<f32> = rows.iter().map(|&idx| x[[idx, feature]]).collect();
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    values.dedup_by(|a, b| (*a - *b).abs() < 1e-7);
+    if values.len() < 2 {
+        return Vec::new();
+    }
+    let step = ((values.len() - 1) / MAX_SPLIT_CANDIDATES).max(1);
+    values
+        .windows(2)
+        .step_by(step)
+        .map(|w| (w[0] + w[1]) * 0.5)
+        .collect()
+}
+
+fn best_split(x: &DenseMatrix, residual: &[f32], rows: &[usize]) -> Option<SplitCandidate> {
     let cols = x.shape()[1];
     let lambda = 1.0f32;
-    let (_, best) = (0..cols)
+    let best = (0..cols)
         .into_par_iter()
-        .map(|feature| {
-            // Contiguous column copy → sequential memory access in all inner loops.
-            let col: Vec<f32> = x.column(feature).iter().copied().collect();
-
-            let mut order: Vec<usize> = (0..rows).collect();
-            order.sort_by(|&a, &b| col[a].partial_cmp(&col[b]).unwrap_or(std::cmp::Ordering::Equal));
-
-            // Midpoint candidates between adjacent unique values (max 32).
-            let mut candidates: Vec<f32> = Vec::new();
-            let mut prev = col[order[0]];
-            for &r in order.iter().skip(1) {
-                let v = col[r];
-                if (v - prev).abs() > 1e-7 {
-                    candidates.push((prev + v) * 0.5);
-                    prev = v;
-                }
-            }
-            if candidates.is_empty() {
-                return (f32::INFINITY, RegStump { feature, threshold: 0.0, left_value: 0.0, right_value: 0.0 });
-            }
-            let step = (candidates.len() / 32).max(1);
-            let candidates: Vec<f32> = candidates.into_iter().step_by(step).collect();
-
-            let mut local_best_loss = f32::INFINITY;
-            let mut local_best = RegStump { feature, threshold: 0.0, left_value: 0.0, right_value: 0.0 };
-
-            for threshold in candidates {
+        .filter_map(|feature| {
+            let mut local_best: Option<SplitCandidate> = None;
+            for threshold in candidate_thresholds(x, rows, feature) {
                 // Single sequential pass: accumulate left/right sums (SIMD-friendly).
-                let (mut l_sum, mut l_cnt, mut r_sum, mut r_cnt) =
-                    (0.0f32, 0usize, 0.0f32, 0usize);
-                for (&xv, &rv) in col.iter().zip(residual.iter()) {
-                    if xv <= threshold { l_sum += rv; l_cnt += 1; }
-                    else               { r_sum += rv; r_cnt += 1; }
+                let (mut l_sum, mut l_cnt, mut r_sum, mut r_cnt) = (0.0f32, 0usize, 0.0f32, 0usize);
+                for &row in rows {
+                    if x[[row, feature]] <= threshold {
+                        l_sum += residual[row];
+                        l_cnt += 1;
+                    } else {
+                        r_sum += residual[row];
+                        r_cnt += 1;
+                    }
                 }
-                if l_cnt == 0 || r_cnt == 0 { continue; }
+                if l_cnt == 0 || r_cnt == 0 {
+                    continue;
+                }
                 let l_mean = l_sum / (l_cnt as f32 + lambda);
                 let r_mean = r_sum / (r_cnt as f32 + lambda);
 
-                // Loss: one more sequential pass over the contiguous column.
-                let loss: f32 = col.iter().zip(residual.iter()).map(|(&xv, &rv)| {
-                    let pred = if xv <= threshold { l_mean } else { r_mean };
-                    let d = rv - pred;
-                    d * d
-                }).sum();
+                let loss: f32 = rows
+                    .iter()
+                    .map(|&row| {
+                        let pred = if x[[row, feature]] <= threshold {
+                            l_mean
+                        } else {
+                            r_mean
+                        };
+                        let d = residual[row] - pred;
+                        d * d
+                    })
+                    .sum();
 
-                if loss < local_best_loss {
-                    local_best_loss = loss;
-                    local_best = RegStump { feature, threshold, left_value: l_mean, right_value: r_mean };
+                if local_best
+                    .as_ref()
+                    .map(|best| loss < best.loss)
+                    .unwrap_or(true)
+                {
+                    local_best = Some(SplitCandidate {
+                        feature,
+                        threshold,
+                        left_value: l_mean,
+                        right_value: r_mean,
+                        loss,
+                    });
                 }
             }
-            (local_best_loss, local_best)
+            local_best
         })
-        .reduce(
-            || (f32::INFINITY, RegStump { feature: 0, threshold: 0.0, left_value: 0.0, right_value: 0.0 }),
-            |(la, sa), (lb, sb)| if la <= lb { (la, sa) } else { (lb, sb) },
-        );
+        .reduce_with(|a, b| if a.loss <= b.loss { a } else { b });
     best
+}
+
+fn build_regression_tree(
+    x: &DenseMatrix,
+    residual: &[f32],
+    rows: &[usize],
+    depth: usize,
+    max_depth: usize,
+) -> RegTree {
+    if rows.is_empty() || depth >= max_depth || rows.len() <= 2 {
+        return RegTree::Leaf(mean_leaf(residual, rows));
+    }
+
+    let Some(split) = best_split(x, residual, rows) else {
+        return RegTree::Leaf(mean_leaf(residual, rows));
+    };
+
+    let mut left_rows = Vec::new();
+    let mut right_rows = Vec::new();
+    for &row in rows {
+        if x[[row, split.feature]] <= split.threshold {
+            left_rows.push(row);
+        } else {
+            right_rows.push(row);
+        }
+    }
+    if left_rows.is_empty() || right_rows.is_empty() {
+        return RegTree::Leaf(mean_leaf(residual, rows));
+    }
+
+    let left = if depth + 1 >= max_depth {
+        RegTree::Leaf(split.left_value)
+    } else {
+        build_regression_tree(x, residual, &left_rows, depth + 1, max_depth)
+    };
+    let right = if depth + 1 >= max_depth {
+        RegTree::Leaf(split.right_value)
+    } else {
+        build_regression_tree(x, residual, &right_rows, depth + 1, max_depth)
+    };
+
+    RegTree::Split {
+        feature: split.feature,
+        threshold: split.threshold,
+        left: Box::new(left),
+        right: Box::new(right),
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct BinaryGradientBoosting {
-    stumps: Vec<RegStump>,
+    trees: Vec<RegTree>,
     base_score: f32,
     learning_rate: f32,
 }
 
 impl BinaryGradientBoosting {
-    fn fit(x: &DenseMatrix, y: &[f32], rounds: usize, learning_rate: f32) -> Self {
+    fn fit(
+        x: &DenseMatrix,
+        y: &[f32],
+        rounds: usize,
+        learning_rate: f32,
+        max_depth: usize,
+    ) -> Self {
         let positive = y.iter().sum::<f32>().max(1.0);
         let negative = (y.len() as f32 - positive).max(1.0);
         let base_score = (positive / negative).ln();
         let mut logits = vec![base_score; y.len()];
-        let mut stumps = Vec::with_capacity(rounds);
+        let mut trees = Vec::with_capacity(rounds);
+        let rows: Vec<usize> = (0..y.len()).collect();
+        let max_depth = max_depth.max(1);
 
         for _ in 0..rounds {
             let residual: Vec<f32> = logits
@@ -115,22 +209,24 @@ impl BinaryGradientBoosting {
                 .map(|(&logit, &target)| target - 1.0 / (1.0 + (-logit).exp()))
                 .collect();
 
-            let stump = fit_regression_stump(x, &residual);
+            let tree = build_regression_tree(x, &residual, &rows, 0, max_depth);
 
-            // Logit update using the pre-extracted column — one sequential pass.
-            let col: Vec<f32> = x.column(stump.feature).iter().copied().collect();
-            let lr = learning_rate;
-            for (logit, &xv) in logits.iter_mut().zip(col.iter()) {
-                *logit += lr * stump.predict(xv);
+            for (row_idx, logit) in logits.iter_mut().enumerate() {
+                let row = x.row(row_idx);
+                *logit += learning_rate * tree.predict(row.as_slice().unwrap_or(&[]));
             }
-            stumps.push(stump);
+            trees.push(tree);
         }
-        Self { stumps, base_score, learning_rate }
+        Self {
+            trees,
+            base_score,
+            learning_rate,
+        }
     }
 
     fn predict_score(&self, row: &[f32]) -> f32 {
-        let logit = self.stumps.iter().fold(self.base_score, |acc, s| {
-            acc + self.learning_rate * s.predict(row[s.feature])
+        let logit = self.trees.iter().fold(self.base_score, |acc, tree| {
+            acc + self.learning_rate * tree.predict(row)
         });
         1.0 / (1.0 + (-logit).exp())
     }
@@ -148,6 +244,7 @@ impl GradientBoostingModel {
         samples: &[TrainingSample],
         rounds: usize,
         learning_rate: f32,
+        max_depth: usize,
         threads: Option<usize>,
     ) -> Result<Self, VecEyesError> {
         let encoder = LabelEncoder::fit(samples);
@@ -163,7 +260,7 @@ impl GradientBoostingModel {
                         .iter()
                         .map(|&i| if i == class_id { 1.0 } else { 0.0 })
                         .collect();
-                    BinaryGradientBoosting::fit(matrix, &targets, rounds, learning_rate)
+                    BinaryGradientBoosting::fit(matrix, &targets, rounds, learning_rate, max_depth)
                 })
                 .collect()
         });
@@ -178,7 +275,10 @@ impl GradientBoostingModel {
             .iter()
             .enumerate()
             .map(|(idx, model)| {
-                (self.encoder.decode(idx), model.predict_score(row_slice).max(1e-9).ln())
+                (
+                    self.encoder.decode(idx),
+                    model.predict_score(row_slice).max(1e-9).ln(),
+                )
             })
             .collect();
         softmax_scores(&raw)

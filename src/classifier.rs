@@ -42,7 +42,10 @@ pub enum MethodKind {
 
 impl MethodKind {
     pub fn is_knn(&self) -> bool {
-        matches!(self, Self::KnnCosine | Self::KnnEuclidean | Self::KnnManhattan | Self::KnnMinkowski)
+        matches!(
+            self,
+            Self::KnnCosine | Self::KnnEuclidean | Self::KnnManhattan | Self::KnnMinkowski
+        )
     }
 
     pub fn requires_p(&self) -> bool {
@@ -59,10 +62,18 @@ pub struct ClassificationResult {
 }
 
 impl ClassificationResult {
-    pub fn top_label(&self) -> Option<&ClassificationLabel> { self.labels.first().map(|(l, _)| l) }
-    pub fn top_score(&self) -> f32 { self.labels.first().map(|(_, s)| *s).unwrap_or(0.0) }
-    pub fn is_hot(&self, threshold: f32) -> bool { self.top_score() >= threshold }
-    pub fn rule_hits(&self) -> &[AlertHit] { &self.extra_hits }
+    pub fn top_label(&self) -> Option<&ClassificationLabel> {
+        self.labels.first().map(|(l, _)| l)
+    }
+    pub fn top_score(&self) -> f32 {
+        self.labels.first().map(|(_, s)| *s).unwrap_or(0.0)
+    }
+    pub fn is_hot(&self, threshold: f32) -> bool {
+        self.top_score() >= threshold
+    }
+    pub fn rule_hits(&self) -> &[AlertHit] {
+        &self.extra_hits
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -107,7 +118,10 @@ impl EnsembleClassifier {
     pub fn new(members: Vec<(Box<dyn Classifier>, f32)>) -> Self {
         let total: f32 = members.iter().map(|(_, w)| w.abs()).sum::<f32>().max(1e-9);
         let members = members.into_iter().map(|(c, w)| (c, w / total)).collect();
-        Self { members, strategy: EnsembleStrategy::WeightedAverage }
+        Self {
+            members,
+            strategy: EnsembleStrategy::WeightedAverage,
+        }
     }
 
     /// Override the combination strategy (builder-style).
@@ -118,7 +132,12 @@ impl EnsembleClassifier {
 }
 
 impl Classifier for EnsembleClassifier {
-    fn classify_text(&self, text: &str, score_sum_mode: ScoreSumMode, matchers: &[Box<dyn RuleMatcher>]) -> ClassificationResult {
+    fn classify_text(
+        &self,
+        text: &str,
+        score_sum_mode: ScoreSumMode,
+        matchers: &[Box<dyn RuleMatcher>],
+    ) -> ClassificationResult {
         use std::collections::HashMap;
         let mut acc: HashMap<ClassificationLabel, f32> = HashMap::new();
         let mut hits = Vec::new();
@@ -141,7 +160,8 @@ impl Classifier for EnsembleClassifier {
         let labels = match self.strategy {
             EnsembleStrategy::WeightedAverage => {
                 let total: f32 = acc.values().sum::<f32>().max(1e-9);
-                let mut v: Vec<(ClassificationLabel, f32)> = acc.into_iter().map(|(l, s)| (l, s / total)).collect();
+                let mut v: Vec<(ClassificationLabel, f32)> =
+                    acc.into_iter().map(|(l, s)| (l, s / total)).collect();
                 v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                 v
             }
@@ -151,7 +171,10 @@ impl Classifier for EnsembleClassifier {
                 crate::math::softmax_scores(&v)
             }
         };
-        ClassificationResult { labels, extra_hits: hits }
+        ClassificationResult {
+            labels,
+            extra_hits: hits,
+        }
     }
 }
 
@@ -174,7 +197,8 @@ pub trait Classifier {
         score_sum_mode: ScoreSumMode,
         matchers: &[Box<dyn RuleMatcher>],
     ) -> Vec<ClassificationResult> {
-        texts.iter()
+        texts
+            .iter()
             .map(|t| self.classify_text(t, score_sum_mode, matchers))
             .collect()
     }
@@ -223,10 +247,26 @@ impl Builder<Box<dyn Classifier>> for ClassifierBuilder {
     }
 
     fn build(self) -> Result<Box<dyn Classifier>, VecEyesError> {
-        let method = self.method.ok_or_else(|| VecEyesError::invalid_config("classifier::ClassifierBuilder::build", "missing method; call .method(...) before .build()"))?;
-        let nlp = self.nlp.ok_or_else(|| VecEyesError::invalid_config("classifier::ClassifierBuilder::build", "missing nlp option; call .nlp(...) before .build()"))?;
-        let hot_label = self.hot_label.clone().unwrap_or(ClassificationLabel::WebAttack);
-        let cold_label = self.cold_label.clone().unwrap_or(ClassificationLabel::RawData);
+        let method = self.method.ok_or_else(|| {
+            VecEyesError::invalid_config(
+                "classifier::ClassifierBuilder::build",
+                "missing method; call .method(...) before .build()",
+            )
+        })?;
+        let nlp = self.nlp.ok_or_else(|| {
+            VecEyesError::invalid_config(
+                "classifier::ClassifierBuilder::build",
+                "missing nlp option; call .nlp(...) before .build()",
+            )
+        })?;
+        let hot_label = self
+            .hot_label
+            .clone()
+            .unwrap_or(ClassificationLabel::WebAttack);
+        let cold_label = self
+            .cold_label
+            .clone()
+            .unwrap_or(ClassificationLabel::RawData);
 
         let samples = if let Some(preloaded) = self.preloaded_samples {
             preloaded
@@ -234,28 +274,70 @@ impl Builder<Box<dyn Classifier>> for ClassifierBuilder {
             let hot_path = self.hot_path.ok_or_else(|| VecEyesError::invalid_config("classifier::ClassifierBuilder::build", "missing hot training path; call .hot_path(...) or .samples(...) before .build()"))?;
             let cold_path = self.cold_path.ok_or_else(|| VecEyesError::invalid_config("classifier::ClassifierBuilder::build", "missing cold training path; call .cold_path(...) or .samples(...) before .build()"))?;
             let mut s = load_training_samples(&hot_path, hot_label.clone(), self.recursive)?;
-            s.extend(load_training_samples(&cold_path, cold_label.clone(), self.recursive)?);
+            s.extend(load_training_samples(
+                &cold_path,
+                cold_label.clone(),
+                self.recursive,
+            )?);
             s
         };
 
         match method {
-            ClassifierMethod::Bayes => Ok(Box::new(BayesBuilder::new().nlp(nlp).samples(samples).threads(self.threads).build()?)),
+            ClassifierMethod::Bayes => Ok(Box::new(
+                BayesBuilder::new()
+                    .nlp(nlp)
+                    .samples(samples)
+                    .threads(self.threads)
+                    .build()?,
+            )),
             ClassifierMethod::KnnCosine => {
                 let k = require_k(self.k)?;
-                Ok(Box::new(KnnBuilder::new().nlp(nlp).samples(samples).threads(self.threads).k(k).cosine().build()?))
+                Ok(Box::new(
+                    KnnBuilder::new()
+                        .nlp(nlp)
+                        .samples(samples)
+                        .threads(self.threads)
+                        .k(k)
+                        .cosine()
+                        .build()?,
+                ))
             }
             ClassifierMethod::KnnEuclidean => {
                 let k = require_k(self.k)?;
-                Ok(Box::new(KnnBuilder::new().nlp(nlp).samples(samples).threads(self.threads).k(k).euclidean().build()?))
+                Ok(Box::new(
+                    KnnBuilder::new()
+                        .nlp(nlp)
+                        .samples(samples)
+                        .threads(self.threads)
+                        .k(k)
+                        .euclidean()
+                        .build()?,
+                ))
             }
             ClassifierMethod::KnnManhattan => {
                 let k = require_k(self.k)?;
-                Ok(Box::new(KnnBuilder::new().nlp(nlp).samples(samples).threads(self.threads).k(k).manhattan().build()?))
+                Ok(Box::new(
+                    KnnBuilder::new()
+                        .nlp(nlp)
+                        .samples(samples)
+                        .threads(self.threads)
+                        .k(k)
+                        .manhattan()
+                        .build()?,
+                ))
             }
             ClassifierMethod::KnnMinkowski => {
                 let k = require_k(self.k)?;
                 let p = require_p(self.p)?;
-                Ok(Box::new(KnnBuilder::new().nlp(nlp).samples(samples).threads(self.threads).k(k).minkowski(p).build()?))
+                Ok(Box::new(
+                    KnnBuilder::new()
+                        .nlp(nlp)
+                        .samples(samples)
+                        .threads(self.threads)
+                        .k(k)
+                        .minkowski(p)
+                        .build()?,
+                ))
             }
             ClassifierMethod::LogisticRegression => {
                 require_logistic_config(&self.advanced)?;
@@ -317,15 +399,13 @@ impl Builder<Box<dyn Classifier>> for ClassifierBuilder {
 }
 
 impl ClassifierBuilder {
+    pub fn new() -> Self {
+        <Self as Builder<Box<dyn Classifier>>>::new()
+    }
 
-pub fn new() -> Self {
-    <Self as Builder<Box<dyn Classifier>>>::new()
-}
-
-pub fn build(self) -> Result<Box<dyn Classifier>, VecEyesError> {
-    <Self as Builder<Box<dyn Classifier>>>::build(self)
-}
-
+    pub fn build(self) -> Result<Box<dyn Classifier>, VecEyesError> {
+        <Self as Builder<Box<dyn Classifier>>>::build(self)
+    }
 
     pub fn method(mut self, method: ClassifierMethod) -> Self {
         self.method = Some(method);
@@ -377,14 +457,14 @@ pub fn build(self) -> Result<Box<dyn Classifier>, VecEyesError> {
         self
     }
 
-/// Supply pre-loaded training samples directly, bypassing `hot_path` / `cold_path`.
-///
-/// When this is set, `hot_path` and `cold_path` are ignored.  `hot_label` and
-/// `cold_label` still contribute as defaults when samples have no override.
-pub fn samples(mut self, samples: Vec<crate::dataset::TrainingSample>) -> Self {
-    self.preloaded_samples = Some(samples);
-    self
-}
+    /// Supply pre-loaded training samples directly, bypassing `hot_path` / `cold_path`.
+    ///
+    /// When this is set, `hot_path` and `cold_path` are ignored.  `hot_label` and
+    /// `cold_label` still contribute as defaults when samples have no override.
+    pub fn samples(mut self, samples: Vec<crate::dataset::TrainingSample>) -> Self {
+        self.preloaded_samples = Some(samples);
+        self
+    }
 
     pub fn k(mut self, k: usize) -> Self {
         self.k = Some(k);
@@ -396,7 +476,12 @@ pub fn samples(mut self, samples: Vec<crate::dataset::TrainingSample>) -> Self {
         self
     }
 
-    pub fn logistic_config(mut self, learning_rate: f32, epochs: usize, lambda: Option<f32>) -> Self {
+    pub fn logistic_config(
+        mut self,
+        learning_rate: f32,
+        epochs: usize,
+        lambda: Option<f32>,
+    ) -> Self {
         self.advanced.logistic = Some(LogisticRegressionConfig {
             learning_rate,
             epochs,
@@ -405,7 +490,12 @@ pub fn samples(mut self, samples: Vec<crate::dataset::TrainingSample>) -> Self {
         self
     }
 
-    pub fn random_forest_config(mut self, n_trees: usize, max_depth: Option<usize>, min_samples_split: Option<usize>) -> Self {
+    pub fn random_forest_config(
+        mut self,
+        n_trees: usize,
+        max_depth: Option<usize>,
+        min_samples_split: Option<usize>,
+    ) -> Self {
         self.advanced.random_forest = Some(RandomForestConfig {
             n_trees,
             max_depth: max_depth.unwrap_or(6),
@@ -416,7 +506,10 @@ pub fn samples(mut self, samples: Vec<crate::dataset::TrainingSample>) -> Self {
     }
 
     pub fn random_forest_mode(mut self, mode: RandomForestMode) -> Self {
-        let cfg = self.advanced.random_forest.get_or_insert_with(RandomForestConfig::default);
+        let cfg = self
+            .advanced
+            .random_forest
+            .get_or_insert_with(RandomForestConfig::default);
         cfg.mode = mode;
         self
     }
@@ -448,7 +541,16 @@ pub fn samples(mut self, samples: Vec<crate::dataset::TrainingSample>) -> Self {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn svm_config(mut self, kernel: SvmKernel, c: f32, learning_rate: Option<f32>, epochs: Option<usize>, gamma: Option<f32>, degree: Option<usize>, coef0: Option<f32>) -> Self {
+    pub fn svm_config(
+        mut self,
+        kernel: SvmKernel,
+        c: f32,
+        learning_rate: Option<f32>,
+        epochs: Option<usize>,
+        gamma: Option<f32>,
+        degree: Option<usize>,
+        coef0: Option<f32>,
+    ) -> Self {
         self.advanced.svm = Some(SvmConfig {
             kernel,
             c,
@@ -461,7 +563,12 @@ pub fn samples(mut self, samples: Vec<crate::dataset::TrainingSample>) -> Self {
         self
     }
 
-    pub fn gradient_boosting_config(mut self, n_estimators: usize, learning_rate: f32, max_depth: Option<usize>) -> Self {
+    pub fn gradient_boosting_config(
+        mut self,
+        n_estimators: usize,
+        learning_rate: f32,
+        max_depth: Option<usize>,
+    ) -> Self {
         self.advanced.gradient_boosting = Some(GradientBoostingConfig {
             n_estimators,
             learning_rate,
@@ -470,7 +577,12 @@ pub fn samples(mut self, samples: Vec<crate::dataset::TrainingSample>) -> Self {
         self
     }
 
-    pub fn isolation_forest_config(mut self, n_trees: usize, contamination: f32, subsample_size: Option<usize>) -> Self {
+    pub fn isolation_forest_config(
+        mut self,
+        n_trees: usize,
+        contamination: f32,
+        subsample_size: Option<usize>,
+    ) -> Self {
         self.advanced.isolation_forest = Some(IsolationForestConfig {
             n_trees,
             contamination,
@@ -484,18 +596,37 @@ pub fn samples(mut self, samples: Vec<crate::dataset::TrainingSample>) -> Self {
     }
 }
 
+impl Default for ClassifierBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub(crate) fn require_k(value: Option<usize>) -> Result<usize, VecEyesError> {
-    let k = value.ok_or_else(|| VecEyesError::invalid_config("classifier::KNN", "field 'k' is required and must be passed explicitly"))?;
+    let k = value.ok_or_else(|| {
+        VecEyesError::invalid_config(
+            "classifier::KNN",
+            "field 'k' is required and must be passed explicitly",
+        )
+    })?;
     if k == 0 {
-        return Err(VecEyesError::invalid_config("classifier::KNN", "k must be >= 1"));
+        return Err(VecEyesError::invalid_config(
+            "classifier::KNN",
+            "k must be >= 1",
+        ));
     }
     Ok(k)
 }
 
 pub(crate) fn require_p(value: Option<f32>) -> Result<f32, VecEyesError> {
-    let p = value.ok_or_else(|| VecEyesError::invalid_config("classifier::KNN Minkowski", "field 'p' is required"))?;
+    let p = value.ok_or_else(|| {
+        VecEyesError::invalid_config("classifier::KNN Minkowski", "field 'p' is required")
+    })?;
     if p <= 0.0 {
-        return Err(VecEyesError::invalid_config("classifier::KNN Minkowski", "p must be > 0"));
+        return Err(VecEyesError::invalid_config(
+            "classifier::KNN Minkowski",
+            "p must be > 0",
+        ));
     }
     Ok(p)
 }
@@ -510,14 +641,20 @@ fn require_logistic_config(config: &AdvancedModelConfig) -> Result<(), VecEyesEr
 fn require_random_forest_config(config: &AdvancedModelConfig) -> Result<(), VecEyesError> {
     match &config.random_forest {
         Some(cfg) if cfg.n_trees > 0 => Ok(()),
-        _ => Err(VecEyesError::invalid_config("classifier::AdvancedClassifier::RandomForest", "random_forest_n_trees must be configured and >= 1")),
+        _ => Err(VecEyesError::invalid_config(
+            "classifier::AdvancedClassifier::RandomForest",
+            "random_forest_n_trees must be configured and >= 1",
+        )),
     }
 }
 
 fn require_svm_config(config: &AdvancedModelConfig) -> Result<(), VecEyesError> {
     match &config.svm {
         Some(cfg) if cfg.c > 0.0 && cfg.epochs > 0 && cfg.learning_rate > 0.0 => Ok(()),
-        _ => Err(VecEyesError::invalid_config("classifier::AdvancedClassifier::Svm", "svm_kernel and svm_c must be configured; training defaults must be positive")),
+        _ => Err(VecEyesError::invalid_config(
+            "classifier::AdvancedClassifier::Svm",
+            "svm_kernel and svm_c must be configured; training defaults must be positive",
+        )),
     }
 }
 
@@ -530,8 +667,13 @@ fn require_gradient_boosting_config(config: &AdvancedModelConfig) -> Result<(), 
 
 fn require_isolation_forest_config(config: &AdvancedModelConfig) -> Result<(), VecEyesError> {
     match &config.isolation_forest {
-        Some(cfg) if cfg.n_trees > 0 && cfg.contamination > 0.0 && cfg.contamination < 0.5 => Ok(()),
-        _ => Err(VecEyesError::invalid_config("classifier::AdvancedClassifier::IsolationForest", "isolation_forest_n_trees must be >= 1 and contamination must be in (0, 0.5)")),
+        Some(cfg) if cfg.n_trees > 0 && cfg.contamination > 0.0 && cfg.contamination < 0.5 => {
+            Ok(())
+        }
+        _ => Err(VecEyesError::invalid_config(
+            "classifier::AdvancedClassifier::IsolationForest",
+            "isolation_forest_n_trees must be >= 1 and contamination must be in (0, 0.5)",
+        )),
     }
 }
 
@@ -542,24 +684,48 @@ pub fn run_rules_pipeline(
     rules.validate()?;
 
     if !classify_objects.exists() {
-        return Err(VecEyesError::invalid_config("classifier::run_rules_pipeline", format!("classify_objects path does not exist: {}", classify_objects.display())));
+        return Err(VecEyesError::invalid_config(
+            "classifier::run_rules_pipeline",
+            format!(
+                "classify_objects path does not exist: {}",
+                classify_objects.display()
+            ),
+        ));
     }
 
     let builder = ClassifierFactory::builder().from_rules_file(rules);
     let classifier = builder.build()?;
     let matchers = ScoringEngine::matchers_from_rules_file(rules)?;
-    let mut report = crate::report::ClassificationReport::new(rules.report_name.clone().unwrap_or_else(|| "Vec-Eyes Report".to_string()));
+    let mut report = crate::report::ClassificationReport::new(
+        rules
+            .report_name
+            .clone()
+            .unwrap_or_else(|| "Vec-Eyes Report".to_string()),
+    );
 
-    let max_file_bytes = rules.max_file_bytes.unwrap_or(crate::dataset::DEFAULT_MAX_FILE_BYTES);
-    let files = crate::dataset::collect_files_recursively(classify_objects, rules.data.recursive_way.is_on())?;
+    let max_file_bytes = rules
+        .max_file_bytes
+        .unwrap_or(crate::dataset::DEFAULT_MAX_FILE_BYTES);
+    let files = crate::dataset::collect_files_recursively(
+        classify_objects,
+        rules.data.recursive_way.is_on(),
+    )?;
     for file in files {
         let text = read_text_file_limited(&file, max_file_bytes)?;
         let result = classifier.classify_text(&text, rules.data.score_sum, &matchers);
-        let labels: Vec<String> = result.labels.iter().map(|(l, s)| format!("{}:{:.2}", l, s)).collect();
+        let labels: Vec<String> = result
+            .labels
+            .iter()
+            .map(|(l, s)| format!("{}:{:.2}", l, s))
+            .collect();
         let top_score = result.labels.first().map(|x| x.1).unwrap_or(0.0);
         let hit_titles: Vec<String> = result.extra_hits.iter().map(|h| h.title.clone()).collect();
         report.records.push(crate::report::ClassificationRecord {
-            title_object: file.file_name().and_then(|x| x.to_str()).unwrap_or("object").to_string(),
+            title_object: file
+                .file_name()
+                .and_then(|x| x.to_str())
+                .unwrap_or("object")
+                .to_string(),
             name_file_dataset: file.to_string_lossy().to_string(),
             date_of_occurrence: Utc::now(),
             score_percent: top_score * 100.0,

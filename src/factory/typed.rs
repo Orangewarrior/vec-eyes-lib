@@ -24,6 +24,12 @@ impl TypedClassifierBuilder<Missing, Missing, Missing> {
     }
 }
 
+impl Default for TypedClassifierBuilder<Missing, Missing, Missing> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<M, N, D> TypedClassifierBuilder<M, N, D> {
     fn from_inner<TM, TN, TD>(inner: ClassifierBuilder) -> TypedClassifierBuilder<TM, TN, TD> {
         TypedClassifierBuilder {
@@ -52,11 +58,17 @@ impl<M, N, D> TypedClassifierBuilder<M, N, D> {
         self
     }
 
-    pub fn logistic_config(mut self, learning_rate: f32, epochs: usize, lambda: Option<f32>) -> Self {
+    pub fn logistic_config(
+        mut self,
+        learning_rate: f32,
+        epochs: usize,
+        lambda: Option<f32>,
+    ) -> Self {
         self.inner = self.inner.logistic_config(learning_rate, epochs, lambda);
         self
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn random_forest_full_config(
         mut self,
         mode: crate::advanced_models::RandomForestMode,
@@ -68,22 +80,57 @@ impl<M, N, D> TypedClassifierBuilder<M, N, D> {
         bootstrap: Option<bool>,
         oob_score: Option<bool>,
     ) -> Self {
-        self.inner = self.inner.random_forest_full_config(mode, n_trees, max_depth, max_features, min_samples_split, min_samples_leaf, bootstrap, oob_score);
+        self.inner = self.inner.random_forest_full_config(
+            mode,
+            n_trees,
+            max_depth,
+            max_features,
+            min_samples_split,
+            min_samples_leaf,
+            bootstrap,
+            oob_score,
+        );
         self
     }
 
-    pub fn isolation_forest_config(mut self, n_trees: usize, contamination: f32, subsample_size: Option<usize>) -> Self {
-        self.inner = self.inner.isolation_forest_config(n_trees, contamination, subsample_size);
+    pub fn isolation_forest_config(
+        mut self,
+        n_trees: usize,
+        contamination: f32,
+        subsample_size: Option<usize>,
+    ) -> Self {
+        self.inner = self
+            .inner
+            .isolation_forest_config(n_trees, contamination, subsample_size);
         self
     }
 
-    pub fn svm_config(mut self, kernel: crate::advanced_models::SvmKernel, c: f32, learning_rate: Option<f32>, epochs: Option<usize>, gamma: Option<f32>, degree: Option<usize>, coef0: Option<f32>) -> Self {
-        self.inner = self.inner.svm_config(kernel, c, learning_rate, epochs, gamma, degree, coef0);
+    #[allow(clippy::too_many_arguments)]
+    pub fn svm_config(
+        mut self,
+        kernel: crate::advanced_models::SvmKernel,
+        c: f32,
+        learning_rate: Option<f32>,
+        epochs: Option<usize>,
+        gamma: Option<f32>,
+        degree: Option<usize>,
+        coef0: Option<f32>,
+    ) -> Self {
+        self.inner = self
+            .inner
+            .svm_config(kernel, c, learning_rate, epochs, gamma, degree, coef0);
         self
     }
 
-    pub fn gradient_boosting_config(mut self, n_estimators: usize, learning_rate: f32, max_depth: Option<usize>) -> Self {
-        self.inner = self.inner.gradient_boosting_config(n_estimators, learning_rate, max_depth);
+    pub fn gradient_boosting_config(
+        mut self,
+        n_estimators: usize,
+        learning_rate: f32,
+        max_depth: Option<usize>,
+    ) -> Self {
+        self.inner = self
+            .inner
+            .gradient_boosting_config(n_estimators, learning_rate, max_depth);
         self
     }
 }

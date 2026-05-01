@@ -1,16 +1,24 @@
 use std::path::Path;
 use vec_eyes_lib::advanced_models::{AdvancedClassifier, AdvancedMethod};
 use vec_eyes_lib::classifier::{run_rules_pipeline, ClassifierFactory, ClassifierMethod};
+use vec_eyes_lib::config::RulesFile;
 use vec_eyes_lib::config::ScoreSumMode;
 use vec_eyes_lib::dataset::load_training_samples;
-use vec_eyes_lib::nlp::NlpOption;
-use vec_eyes_lib::config::RulesFile;
 use vec_eyes_lib::labels::ClassificationLabel;
+use vec_eyes_lib::nlp::NlpOption;
 
-fn assert_label_present(report: &vec_eyes_lib::report::ClassificationReport, expected: ClassificationLabel) {
+fn assert_label_present(
+    report: &vec_eyes_lib::report::ClassificationReport,
+    expected: ClassificationLabel,
+) {
     let prefix = format!("{}:", expected);
     let ranked = &report.records.first().expect("record").classify_names_list;
-    assert!(ranked.contains(&prefix), "expected '{}' in '{}'", prefix, ranked);
+    assert!(
+        ranked.contains(&prefix),
+        "expected '{}' in '{}'",
+        prefix,
+        ranked
+    );
 }
 
 #[test]
@@ -23,7 +31,10 @@ fn yaml_parses_new_methods() {
         "tests/data/rules/fraud_isolation_forest.yaml",
     ] {
         let rules = RulesFile::from_yaml_path(path).unwrap();
-        assert!(!rules.model.method_kind().is_knn(), "{path} should not be treated as knn");
+        assert!(
+            !rules.model.method_kind().is_knn(),
+            "{path} should not be treated as knn"
+        );
     }
 }
 
@@ -38,7 +49,11 @@ fn uci_sms_family_methods_classify_spam_like_probe() {
     for yaml in yamls {
         let rules = RulesFile::from_yaml_path(yaml).unwrap();
         let report = run_rules_pipeline(&rules, Path::new("tests/data/uci_sms/classify")).unwrap();
-        assert_eq!(report.records.len(), 1, "expected one output record for {yaml}");
+        assert_eq!(
+            report.records.len(),
+            1,
+            "expected one output record for {yaml}"
+        );
         assert_label_present(&report, ClassificationLabel::Spam);
     }
 }
@@ -53,8 +68,13 @@ fn uci_fraud_advanced_methods_detect_high_risk_text() {
     ];
     for yaml in yamls {
         let rules = RulesFile::from_yaml_path(yaml).unwrap();
-        let report = run_rules_pipeline(&rules, Path::new("tests/data/uci_fraud/classify")).unwrap();
-        assert_eq!(report.records.len(), 1, "expected one output record for {yaml}");
+        let report =
+            run_rules_pipeline(&rules, Path::new("tests/data/uci_fraud/classify")).unwrap();
+        assert_eq!(
+            report.records.len(),
+            1,
+            "expected one output record for {yaml}"
+        );
         assert_label_present(&report, ClassificationLabel::Anomaly);
     }
 }
@@ -69,8 +89,13 @@ fn uci_biology_advanced_methods_detect_virus_text() {
     ];
     for yaml in yamls {
         let rules = RulesFile::from_yaml_path(yaml).unwrap();
-        let report = run_rules_pipeline(&rules, Path::new("tests/data/uci_biology/classify")).unwrap();
-        assert_eq!(report.records.len(), 1, "expected one output record for {yaml}");
+        let report =
+            run_rules_pipeline(&rules, Path::new("tests/data/uci_biology/classify")).unwrap();
+        assert_eq!(
+            report.records.len(),
+            1,
+            "expected one output record for {yaml}"
+        );
         assert_label_present(&report, ClassificationLabel::Virus);
     }
 }
@@ -85,7 +110,8 @@ fn isolation_forest_flags_fraud_probe_as_anomaly() {
 
 #[test]
 fn isolation_forest_flags_virus_probe_as_virus() {
-    let rules = RulesFile::from_yaml_path("tests/data/rules/biology_isolation_forest.yaml").unwrap();
+    let rules =
+        RulesFile::from_yaml_path("tests/data/rules/biology_isolation_forest.yaml").unwrap();
     let report = run_rules_pipeline(&rules, Path::new("tests/data/uci_biology/classify")).unwrap();
     assert_eq!(report.records.len(), 1);
     assert_label_present(&report, ClassificationLabel::Virus);
@@ -93,7 +119,9 @@ fn isolation_forest_flags_virus_probe_as_virus() {
 
 #[test]
 fn yaml_validation_rejects_missing_required_advanced_params() {
-    assert!(RulesFile::from_yaml_path("tests/data/rules/invalid_logistic_missing_params.yaml").is_err());
+    assert!(
+        RulesFile::from_yaml_path("tests/data/rules/invalid_logistic_missing_params.yaml").is_err()
+    );
     assert!(RulesFile::from_yaml_path("tests/data/rules/invalid_svm_missing_kernel.yaml").is_err());
 }
 
@@ -125,7 +153,10 @@ fn builder_api_accepts_advanced_hyperparameters() {
     );
 
     assert!(!result.labels.is_empty());
-    assert!(result.labels.iter().any(|(label, _)| *label == ClassificationLabel::Spam));
+    assert!(result
+        .labels
+        .iter()
+        .any(|(label, _)| *label == ClassificationLabel::Spam));
 }
 
 #[test]
@@ -138,14 +169,21 @@ fn random_forest_modes_yaml_are_accepted_and_classify_sms_probe() {
     for yaml in yamls {
         let rules = RulesFile::from_yaml_path(yaml).unwrap();
         let report = run_rules_pipeline(&rules, Path::new("tests/data/uci_sms/classify")).unwrap();
-        assert_eq!(report.records.len(), 1, "expected one output record for {yaml}");
+        assert_eq!(
+            report.records.len(),
+            1,
+            "expected one output record for {yaml}"
+        );
         assert_label_present(&report, ClassificationLabel::Spam);
     }
 }
 
 #[test]
 fn random_forest_yaml_rejects_oob_without_bootstrap() {
-    assert!(RulesFile::from_yaml_path("tests/data/rules/invalid_randomforest_oob_without_bootstrap.yaml").is_err());
+    assert!(RulesFile::from_yaml_path(
+        "tests/data/rules/invalid_randomforest_oob_without_bootstrap.yaml"
+    )
+    .is_err());
 }
 
 #[test]
@@ -177,7 +215,10 @@ fn builder_api_accepts_random_forest_modes() {
     );
 
     assert!(!result.labels.is_empty());
-    assert!(result.labels.iter().any(|(label, _)| *label == ClassificationLabel::Spam));
+    assert!(result
+        .labels
+        .iter()
+        .any(|(label, _)| *label == ClassificationLabel::Spam));
 }
 
 #[test]
@@ -200,7 +241,10 @@ fn builder_api_accepts_isolation_forest_hyperparameters() {
     );
 
     assert!(!result.labels.is_empty());
-    assert!(result.labels.iter().any(|(label, _)| *label == ClassificationLabel::Anomaly));
+    assert!(result
+        .labels
+        .iter()
+        .any(|(label, _)| *label == ClassificationLabel::Anomaly));
 }
 
 #[test]
@@ -220,14 +264,31 @@ fn random_forest_oob_yaml_is_accepted_and_trains_real_oob_score() {
     let rules = RulesFile::from_yaml_path("tests/data/rules/sms_randomforest_oob.yaml").unwrap();
     rules.validate().unwrap();
 
-    let mut samples = load_training_samples(Path::new("tests/data/uci_sms/hot"), ClassificationLabel::Spam, true).unwrap();
-    let mut cold = load_training_samples(Path::new("tests/data/uci_sms/cold"), ClassificationLabel::RawData, true).unwrap();
+    let mut samples = load_training_samples(
+        Path::new("tests/data/uci_sms/hot"),
+        ClassificationLabel::Spam,
+        true,
+    )
+    .unwrap();
+    let mut cold = load_training_samples(
+        Path::new("tests/data/uci_sms/cold"),
+        ClassificationLabel::RawData,
+        true,
+    )
+    .unwrap();
     samples.append(&mut cold);
 
     let rf_config = match &rules.model {
         vec_eyes_lib::config::ModelConfig::RandomForest {
-            mode, n_trees, max_depth, max_features,
-            min_samples_split, min_samples_leaf, bootstrap, oob_score, random_seed,
+            mode,
+            n_trees,
+            max_depth,
+            max_features,
+            min_samples_split,
+            min_samples_leaf,
+            bootstrap,
+            oob_score,
+            random_seed,
         } => vec_eyes_lib::advanced_models::RandomForestConfig {
             mode: mode.clone(),
             n_trees: *n_trees,
@@ -251,18 +312,22 @@ fn random_forest_oob_yaml_is_accepted_and_trains_real_oob_score() {
             random_forest: Some(rf_config),
             ..Default::default()
         },
-    ).unwrap();
+    )
+    .unwrap();
 
     let oob = classifier.random_forest_oob_score();
     assert!(oob.is_some(), "expected real OOB score to be computed");
     let value = oob.unwrap();
-    assert!((0.0..=1.0).contains(&value), "expected OOB score in [0,1], got {}", value);
-
-    let result = classifier.classify_text(
-        "urgent free prize claim now",
-        ScoreSumMode::Off,
-        &[],
+    assert!(
+        (0.0..=1.0).contains(&value),
+        "expected OOB score in [0,1], got {}",
+        value
     );
+
+    let result = classifier.classify_text("urgent free prize claim now", ScoreSumMode::Off, &[]);
     assert!(!result.labels.is_empty());
-    assert!(result.labels.iter().any(|(label, _)| *label == ClassificationLabel::Spam));
+    assert!(result
+        .labels
+        .iter()
+        .any(|(label, _)| *label == ClassificationLabel::Spam));
 }

@@ -5,7 +5,9 @@ use crate::labels::ClassificationLabel;
 /// Numerically stable via max-subtraction before exponentiation.  Input scores
 /// may be raw logits, log-probabilities, or any monotone proxy — only relative
 /// order matters for the output distribution.
-pub(crate) fn softmax_scores(input: &[(ClassificationLabel, f32)]) -> Vec<(ClassificationLabel, f32)> {
+pub(crate) fn softmax_scores(
+    input: &[(ClassificationLabel, f32)],
+) -> Vec<(ClassificationLabel, f32)> {
     if input.is_empty() {
         return Vec::new();
     }

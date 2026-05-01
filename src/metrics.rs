@@ -16,56 +16,118 @@ use std::hash::Hash;
 
 /// Fraction of predictions that match the ground-truth labels.
 pub fn accuracy<L: Eq>(y_true: &[L], y_pred: &[L]) -> f32 {
-    assert_eq!(y_true.len(), y_pred.len(), "y_true and y_pred must have equal length");
+    assert_eq!(
+        y_true.len(),
+        y_pred.len(),
+        "y_true and y_pred must have equal length"
+    );
     if y_true.is_empty() {
         return 0.0;
     }
-    let correct = y_true.iter().zip(y_pred.iter()).filter(|(t, p)| t == p).count();
+    let correct = y_true
+        .iter()
+        .zip(y_pred.iter())
+        .filter(|(t, p)| t == p)
+        .count();
     correct as f32 / y_true.len() as f32
 }
 
 /// Precision for one class: TP / (TP + FP).
 pub fn precision<L: Eq>(y_true: &[L], y_pred: &[L], positive: &L) -> f32 {
-    assert_eq!(y_true.len(), y_pred.len(), "y_true and y_pred must have equal length");
-    let tp = y_pred.iter().zip(y_true.iter()).filter(|(p, t)| p == &positive && t == &positive).count();
-    let fp = y_pred.iter().zip(y_true.iter()).filter(|(p, t)| p == &positive && t != &positive).count();
+    assert_eq!(
+        y_true.len(),
+        y_pred.len(),
+        "y_true and y_pred must have equal length"
+    );
+    let tp = y_pred
+        .iter()
+        .zip(y_true.iter())
+        .filter(|(p, t)| p == &positive && t == &positive)
+        .count();
+    let fp = y_pred
+        .iter()
+        .zip(y_true.iter())
+        .filter(|(p, t)| p == &positive && t != &positive)
+        .count();
     let denom = tp + fp;
-    if denom == 0 { 0.0 } else { tp as f32 / denom as f32 }
+    if denom == 0 {
+        0.0
+    } else {
+        tp as f32 / denom as f32
+    }
 }
 
 /// Recall for one class: TP / (TP + FN).
 pub fn recall<L: Eq>(y_true: &[L], y_pred: &[L], positive: &L) -> f32 {
-    assert_eq!(y_true.len(), y_pred.len(), "y_true and y_pred must have equal length");
-    let tp = y_pred.iter().zip(y_true.iter()).filter(|(p, t)| p == &positive && t == &positive).count();
-    let fn_ = y_pred.iter().zip(y_true.iter()).filter(|(p, t)| p != &positive && t == &positive).count();
+    assert_eq!(
+        y_true.len(),
+        y_pred.len(),
+        "y_true and y_pred must have equal length"
+    );
+    let tp = y_pred
+        .iter()
+        .zip(y_true.iter())
+        .filter(|(p, t)| p == &positive && t == &positive)
+        .count();
+    let fn_ = y_pred
+        .iter()
+        .zip(y_true.iter())
+        .filter(|(p, t)| p != &positive && t == &positive)
+        .count();
     let denom = tp + fn_;
-    if denom == 0 { 0.0 } else { tp as f32 / denom as f32 }
+    if denom == 0 {
+        0.0
+    } else {
+        tp as f32 / denom as f32
+    }
 }
 
 /// F1 score for one class: harmonic mean of precision and recall.
 pub fn f1<L: Eq>(y_true: &[L], y_pred: &[L], positive: &L) -> f32 {
     let p = precision(y_true, y_pred, positive);
     let r = recall(y_true, y_pred, positive);
-    if p + r < 1e-9 { 0.0 } else { 2.0 * p * r / (p + r) }
+    if p + r < 1e-9 {
+        0.0
+    } else {
+        2.0 * p * r / (p + r)
+    }
 }
 
 /// Macro-average F1: unweighted mean of per-class F1 scores.
 pub fn macro_f1<L: Eq + Hash + Clone>(y_true: &[L], y_pred: &[L]) -> f32 {
-    assert_eq!(y_true.len(), y_pred.len(), "y_true and y_pred must have equal length");
+    assert_eq!(
+        y_true.len(),
+        y_pred.len(),
+        "y_true and y_pred must have equal length"
+    );
     let classes: std::collections::HashSet<_> = y_true.iter().chain(y_pred.iter()).collect();
-    if classes.is_empty() { return 0.0; }
+    if classes.is_empty() {
+        return 0.0;
+    }
     let sum: f32 = classes.iter().map(|c| f1(y_true, y_pred, c)).sum();
     sum / classes.len() as f32
 }
 
 /// Weighted F1: class F1 weighted by support (true class frequency).
 pub fn weighted_f1<L: Eq + Hash + Clone>(y_true: &[L], y_pred: &[L]) -> f32 {
-    assert_eq!(y_true.len(), y_pred.len(), "y_true and y_pred must have equal length");
-    if y_true.is_empty() { return 0.0; }
+    assert_eq!(
+        y_true.len(),
+        y_pred.len(),
+        "y_true and y_pred must have equal length"
+    );
+    if y_true.is_empty() {
+        return 0.0;
+    }
     let mut support: HashMap<_, usize> = HashMap::new();
-    for label in y_true { *support.entry(label).or_insert(0) += 1; }
+    for label in y_true {
+        *support.entry(label).or_insert(0) += 1;
+    }
     let total = y_true.len() as f32;
-    support.iter().map(|(label, &count)| f1(y_true, y_pred, label) * count as f32).sum::<f32>() / total
+    support
+        .iter()
+        .map(|(label, &count)| f1(y_true, y_pred, label) * count as f32)
+        .sum::<f32>()
+        / total
 }
 
 /// Area under the ROC curve for binary classification.
@@ -73,10 +135,14 @@ pub fn weighted_f1<L: Eq + Hash + Clone>(y_true: &[L], y_pred: &[L]) -> f32 {
 /// `scores` is a slice of `(predicted_score, is_positive_class)` pairs.
 /// Uses the trapezoidal rule over all unique thresholds.
 pub fn roc_auc(scores: &[(f32, bool)]) -> f32 {
-    if scores.is_empty() { return 0.0; }
+    if scores.is_empty() {
+        return 0.0;
+    }
     let positives = scores.iter().filter(|&&(_, p)| p).count();
     let negatives = scores.len() - positives;
-    if positives == 0 || negatives == 0 { return 0.5; }
+    if positives == 0 || negatives == 0 {
+        return 0.5;
+    }
 
     let mut sorted = scores.to_vec();
     sorted.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -88,7 +154,11 @@ pub fn roc_auc(scores: &[(f32, bool)]) -> f32 {
     let mut prev_fp = 0usize;
 
     for &(_, is_positive) in &sorted {
-        if is_positive { tp += 1; } else { fp += 1; }
+        if is_positive {
+            tp += 1;
+        } else {
+            fp += 1;
+        }
         let tpr = tp as f32 / positives as f32;
         let fpr = fp as f32 / negatives as f32;
         let prev_tpr = prev_tp as f32 / positives as f32;
@@ -104,12 +174,12 @@ pub fn roc_auc(scores: &[(f32, bool)]) -> f32 {
 ///
 /// `result[i][j]` = number of samples with true label `labels[i]` predicted
 /// as `labels[j]`.
-pub fn confusion_matrix<L: Eq + Hash>(
-    y_true: &[L],
-    y_pred: &[L],
-    labels: &[L],
-) -> Vec<Vec<usize>> {
-    assert_eq!(y_true.len(), y_pred.len(), "y_true and y_pred must have equal length");
+pub fn confusion_matrix<L: Eq + Hash>(y_true: &[L], y_pred: &[L], labels: &[L]) -> Vec<Vec<usize>> {
+    assert_eq!(
+        y_true.len(),
+        y_pred.len(),
+        "y_true and y_pred must have equal length"
+    );
     let n = labels.len();
     let label_idx: HashMap<_, usize> = labels.iter().enumerate().map(|(i, l)| (l, i)).collect();
     let mut matrix = vec![vec![0usize; n]; n];
@@ -144,19 +214,28 @@ pub fn classification_report<L: Eq + Hash + Clone>(
     y_true: &[L],
     y_pred: &[L],
 ) -> ClassificationReport<L> {
-    assert_eq!(y_true.len(), y_pred.len(), "y_true and y_pred must have equal length");
+    assert_eq!(
+        y_true.len(),
+        y_pred.len(),
+        "y_true and y_pred must have equal length"
+    );
     let mut support: HashMap<&L, usize> = HashMap::new();
-    for l in y_true { *support.entry(l).or_insert(0) += 1; }
+    for l in y_true {
+        *support.entry(l).or_insert(0) += 1;
+    }
     let mut classes: Vec<&L> = support.keys().copied().collect();
     // Stable ordering: sorted by support descending so dominant class is first.
     classes.sort_by(|a, b| support[b].cmp(&support[a]));
-    let per_class = classes.iter().map(|label| ClassMetrics {
-        label: (*label).clone(),
-        precision: precision(y_true, y_pred, label),
-        recall: recall(y_true, y_pred, label),
-        f1: f1(y_true, y_pred, label),
-        support: *support.get(label).unwrap_or(&0),
-    }).collect();
+    let per_class = classes
+        .iter()
+        .map(|label| ClassMetrics {
+            label: (*label).clone(),
+            precision: precision(y_true, y_pred, label),
+            recall: recall(y_true, y_pred, label),
+            f1: f1(y_true, y_pred, label),
+            support: *support.get(label).unwrap_or(&0),
+        })
+        .collect();
     ClassificationReport {
         per_class,
         accuracy: accuracy(y_true, y_pred),

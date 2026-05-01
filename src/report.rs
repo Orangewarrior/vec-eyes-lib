@@ -21,7 +21,10 @@ pub struct ClassificationReport {
 
 impl ClassificationReport {
     pub fn new(report_name: String) -> Self {
-        Self { report_name, records: Vec::new() }
+        Self {
+            report_name,
+            records: Vec::new(),
+        }
     }
 
     pub fn write_csv<P: AsRef<Path>>(&self, path: P) -> Result<(), VecEyesError> {

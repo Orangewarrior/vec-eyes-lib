@@ -1,8 +1,10 @@
+#![allow(deprecated)]
+
 use std::path::PathBuf;
 
 use vec_eyes_lib::{
-    alerts::AlertMatcher, ClassificationLabel, DistanceMetric, EngineBuilder, FastTextConfigBuilder,
-    KnnBuilder, NlpPipelineBuilder, OutputWriters, RepresentationKind,
+    alerts::AlertMatcher, ClassificationLabel, DistanceMetric, EngineBuilder,
+    FastTextConfigBuilder, KnnBuilder, NlpPipelineBuilder, OutputWriters, RepresentationKind,
 };
 
 fn root() -> PathBuf {
@@ -36,10 +38,15 @@ fn fasttext_knn_and_alert_rule_push_block_list() {
         .build()
         .unwrap();
 
-    let report = engine.classify_text(
-        "GET /download?file=payload from 10.10.10.10 and http://bad.example/m.exe",
-        "imap-buffer",
-    ).unwrap();
+    let report = engine
+        .classify_text(
+            "GET /download?file=payload from 10.10.10.10 and http://bad.example/m.exe",
+            "imap-buffer",
+        )
+        .unwrap();
 
-    assert!(report.classifications.iter().any(|(label, _)| *label == ClassificationLabel::BlockList));
+    assert!(report
+        .classifications
+        .iter()
+        .any(|(label, _)| *label == ClassificationLabel::BlockList));
 }

@@ -5,6 +5,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 static GLOBAL_POOLS: OnceLock<RwLock<HashMap<usize, Arc<ThreadPool>>>> = OnceLock::new();
 
 const MAX_POOL_CACHE: usize = 32;
+const MAX_POOL_THREADS: usize = crate::security::MAX_CONFIG_THREADS;
 
 fn cached_pool(threads: usize) -> Option<Arc<ThreadPool>> {
     let cache = GLOBAL_POOLS.get_or_init(|| RwLock::new(HashMap::new()));
@@ -39,7 +40,7 @@ where
     T: Send,
 {
     match threads {
-        Some(n) if n > 1 => match cached_pool(n) {
+        Some(n) if n > 1 => match cached_pool(n.min(MAX_POOL_THREADS)) {
             Some(pool) => pool.install(job),
             None => job(),
         },

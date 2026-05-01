@@ -7,6 +7,11 @@ use crate::nlp::{DenseMatrix, TfIdfModel};
 
 const FASTTEXT_MAGIC: i32 = 793712314;
 const FASTTEXT_VERSION: i32 = 12;
+const MAX_FASTTEXT_DIMS: usize = 4096;
+const MAX_FASTTEXT_DICT_SIZE: usize = 5_000_000;
+const MAX_FASTTEXT_BUCKETS: usize = 20_000_000;
+const MAX_FASTTEXT_MATRIX_BYTES: usize = 2 * 1024 * 1024 * 1024;
+const MAX_FASTTEXT_WORD_BYTES: usize = 4096;
 
 // ── Low-level binary helpers ─────────────────────────────────────────────────
 
@@ -42,10 +47,77 @@ fn read_cstring(r: &mut impl Read) -> Result<String, VecEyesError> {
         if b[0] == 0 {
             break;
         }
+        if bytes.len() >= MAX_FASTTEXT_WORD_BYTES {
+            return Err(VecEyesError::invalid_config(
+                "FastTextBin::read_cstring",
+                format!("dictionary token exceeds {MAX_FASTTEXT_WORD_BYTES} bytes"),
+            ));
+        }
         bytes.push(b[0]);
     }
     String::from_utf8(bytes)
         .map_err(|e| VecEyesError::invalid_config("FastTextBin::read_cstring", e.to_string()))
+}
+
+fn checked_nonnegative_usize(value: i64, field: &str) -> Result<usize, VecEyesError> {
+    if value < 0 {
+        return Err(VecEyesError::invalid_config(
+            "FastTextBin::load",
+            format!("{field} must be non-negative, got {value}"),
+        ));
+    }
+    usize::try_from(value).map_err(|_| {
+        VecEyesError::invalid_config(
+            "FastTextBin::load",
+            format!("{field} does not fit in usize: {value}"),
+        )
+    })
+}
+
+fn checked_positive_usize(value: i32, field: &str, max: usize) -> Result<usize, VecEyesError> {
+    if value <= 0 {
+        return Err(VecEyesError::invalid_config(
+            "FastTextBin::load",
+            format!("{field} must be positive, got {value}"),
+        ));
+    }
+    let value = usize::try_from(value).map_err(|_| {
+        VecEyesError::invalid_config(
+            "FastTextBin::load",
+            format!("{field} does not fit in usize: {value}"),
+        )
+    })?;
+    if value > max {
+        return Err(VecEyesError::invalid_config(
+            "FastTextBin::load",
+            format!("{field}={value} exceeds supported limit {max}"),
+        ));
+    }
+    Ok(value)
+}
+
+fn checked_matrix_len(rows: usize, cols: usize) -> Result<usize, VecEyesError> {
+    let floats = rows.checked_mul(cols).ok_or_else(|| {
+        VecEyesError::invalid_config(
+            "FastTextBin::load",
+            format!("matrix shape {rows}x{cols} overflows usize"),
+        )
+    })?;
+    let bytes = floats
+        .checked_mul(std::mem::size_of::<f32>())
+        .ok_or_else(|| {
+            VecEyesError::invalid_config(
+                "FastTextBin::load",
+                format!("matrix shape {rows}x{cols} overflows byte length"),
+            )
+        })?;
+    if bytes > MAX_FASTTEXT_MATRIX_BYTES {
+        return Err(VecEyesError::invalid_config(
+            "FastTextBin::load",
+            format!("matrix requires {bytes} bytes, limit is {MAX_FASTTEXT_MATRIX_BYTES}"),
+        ));
+    }
+    Ok(floats)
 }
 
 fn read_f32_chunk(r: &mut impl Read, buf: &mut [f32]) -> Result<(), VecEyesError> {
@@ -55,7 +127,10 @@ fn read_f32_chunk(r: &mut impl Read, buf: &mut [f32]) -> Result<(), VecEyesError
     while offset < buf.len() {
         let n = (buf.len() - offset).min(CHUNK);
         r.read_exact(&mut tmp[..n * 4])?;
-        for (dst, src) in buf[offset..offset + n].iter_mut().zip(tmp[..n * 4].chunks_exact(4)) {
+        for (dst, src) in buf[offset..offset + n]
+            .iter_mut()
+            .zip(tmp[..n * 4].chunks_exact(4))
+        {
             *dst = f32::from_le_bytes(src.try_into().unwrap());
         }
         offset += n;
@@ -157,25 +232,20 @@ impl FastTextBin {
         if magic != FASTTEXT_MAGIC {
             return Err(VecEyesError::invalid_config(
                 "FastTextBin::load",
-                format!(
-                    "bad magic 0x{:x} — not a fastText v12 .bin file",
-                    magic
-                ),
+                format!("bad magic 0x{:x} — not a fastText v12 .bin file", magic),
             ));
         }
         let version = read_i32(&mut r)?;
         if version != FASTTEXT_VERSION {
             return Err(VecEyesError::invalid_config(
                 "FastTextBin::load",
-                format!(
-                    "unsupported fastText version {version} (expected {FASTTEXT_VERSION})"
-                ),
+                format!("unsupported fastText version {version} (expected {FASTTEXT_VERSION})"),
             ));
         }
 
         // Args struct (order matches fastText C++ Args::save)
         let _lr = read_f64(&mut r)?;
-        let dim = read_i32(&mut r)? as usize;
+        let dim = checked_positive_usize(read_i32(&mut r)?, "dim", MAX_FASTTEXT_DIMS)?;
         let _ws = read_i32(&mut r)?;
         let _epoch = read_i32(&mut r)?;
         let _min_count = read_i32(&mut r)?;
@@ -183,15 +253,28 @@ impl FastTextBin {
         let _word_ngrams = read_i32(&mut r)?;
         let _loss = read_i32(&mut r)?;
         let _model = read_i32(&mut r)?;
-        let bucket = read_i32(&mut r)? as usize;
-        let minn = read_i32(&mut r)? as usize;
-        let maxn = read_i32(&mut r)? as usize;
+        let bucket = checked_positive_usize(read_i32(&mut r)?, "bucket", MAX_FASTTEXT_BUCKETS)?;
+        let minn = checked_positive_usize(read_i32(&mut r)?, "minn", MAX_FASTTEXT_WORD_BYTES)?;
+        let maxn = checked_positive_usize(read_i32(&mut r)?, "maxn", MAX_FASTTEXT_WORD_BYTES)?;
+        if minn > maxn {
+            return Err(VecEyesError::invalid_config(
+                "FastTextBin::load",
+                format!("minn ({minn}) cannot be greater than maxn ({maxn})"),
+            ));
+        }
         let _lr_update = read_i32(&mut r)?;
         let _t = read_f64(&mut r)?;
 
         // Dictionary header
-        let dict_size = read_i32(&mut r)? as usize;
-        let nwords = read_i32(&mut r)? as usize;
+        let dict_size =
+            checked_positive_usize(read_i32(&mut r)?, "dict_size", MAX_FASTTEXT_DICT_SIZE)?;
+        let nwords = checked_positive_usize(read_i32(&mut r)?, "nwords", MAX_FASTTEXT_DICT_SIZE)?;
+        if nwords > dict_size {
+            return Err(VecEyesError::invalid_config(
+                "FastTextBin::load",
+                format!("nwords ({nwords}) cannot exceed dict_size ({dict_size})"),
+            ));
+        }
         let _nlabels = read_i32(&mut r)?;
         let _ntokens = read_i64(&mut r)?;
         let pruneidx_size = read_i64(&mut r)?;
@@ -220,16 +303,29 @@ impl FastTextBin {
         }
 
         // Input matrix: rows = nwords + bucket, cols = dim
-        let mat_rows = read_i64(&mut r)? as usize;
-        let mat_cols = read_i64(&mut r)? as usize;
+        let mat_rows = checked_nonnegative_usize(read_i64(&mut r)?, "matrix rows")?;
+        let mat_cols = checked_nonnegative_usize(read_i64(&mut r)?, "matrix cols")?;
         if mat_cols != dim {
             return Err(VecEyesError::invalid_config(
                 "FastTextBin::load",
                 format!("matrix cols {mat_cols} != args dim {dim}"),
             ));
         }
+        let expected_rows = nwords.checked_add(bucket).ok_or_else(|| {
+            VecEyesError::invalid_config(
+                "FastTextBin::load",
+                format!("nwords ({nwords}) + bucket ({bucket}) overflows usize"),
+            )
+        })?;
+        if mat_rows < nwords || mat_rows > expected_rows {
+            return Err(VecEyesError::invalid_config(
+                "FastTextBin::load",
+                format!("matrix rows {mat_rows} outside expected range {nwords}..={expected_rows}"),
+            ));
+        }
 
-        let mut matrix = vec![0f32; mat_rows * mat_cols];
+        let matrix_len = checked_matrix_len(mat_rows, mat_cols)?;
+        let mut matrix = vec![0f32; matrix_len];
         read_f32_chunk(&mut r, &mut matrix)?;
 
         Ok(Self {
@@ -254,8 +350,7 @@ impl FastTextBin {
     /// this allocates substantial memory — prefer [`extract_for_vocab`] when only
     /// a known vocabulary is needed.
     pub fn extract_all(&self) -> FastTextEmbeddings {
-        let mut word_vectors: HashMap<String, Vec<f32>> =
-            HashMap::with_capacity(self.nwords);
+        let mut word_vectors: HashMap<String, Vec<f32>> = HashMap::with_capacity(self.nwords);
         for (word, &idx) in &self.word_index {
             if idx < self.total_rows {
                 word_vectors.insert(word.clone(), self.row(idx).to_vec());
@@ -285,8 +380,7 @@ impl FastTextBin {
     /// required for OOV composition — produces a much smaller model than
     /// [`extract_all`](FastTextBin::extract_all).
     pub fn extract_for_vocab(&self, vocab: &[&str]) -> FastTextEmbeddings {
-        let mut word_vectors: HashMap<String, Vec<f32>> =
-            HashMap::with_capacity(vocab.len());
+        let mut word_vectors: HashMap<String, Vec<f32>> = HashMap::with_capacity(vocab.len());
         let mut needed: HashSet<usize> = HashSet::new();
 
         for &word in vocab {
@@ -295,16 +389,13 @@ impl FastTextBin {
                     word_vectors.insert(word.to_string(), self.row(idx).to_vec());
                 }
             } else {
-                for h in
-                    subword_hashes(word, self.minn, self.maxn, self.bucket, self.nwords)
-                {
+                for h in subword_hashes(word, self.minn, self.maxn, self.bucket, self.nwords) {
                     needed.insert(h - self.nwords);
                 }
             }
         }
 
-        let mut bucket_vectors: HashMap<usize, Vec<f32>> =
-            HashMap::with_capacity(needed.len());
+        let mut bucket_vectors: HashMap<usize, Vec<f32>> = HashMap::with_capacity(needed.len());
         for bi in needed {
             let row_idx = self.nwords + bi;
             if row_idx < self.total_rows {
@@ -357,8 +448,7 @@ impl FastTextEmbeddings {
         if self.maxn == 0 || self.bucket_size == 0 {
             return None;
         }
-        let hashes =
-            subword_hashes(word, self.minn, self.maxn, self.bucket_size, self.nwords);
+        let hashes = subword_hashes(word, self.minn, self.maxn, self.bucket_size, self.nwords);
         if hashes.is_empty() {
             return None;
         }
@@ -393,17 +483,57 @@ impl FastTextEmbeddings {
 
     /// Save to a bincode file for fast reloading.
     pub fn save_bincode<P: AsRef<Path>>(&self, path: P) -> Result<(), VecEyesError> {
-        let bytes = bincode::serialize(self)
-            .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        let bytes =
+            bincode::serialize(self).map_err(|e| VecEyesError::Serialization(e.to_string()))?;
         std::fs::write(path, bytes)?;
         Ok(())
     }
 
     /// Load from a bincode file previously written by [`save_bincode`](FastTextEmbeddings::save_bincode).
     pub fn load_bincode<P: AsRef<Path>>(path: P) -> Result<Self, VecEyesError> {
-        let bytes = std::fs::read(path)?;
-        bincode::deserialize(&bytes)
-            .map_err(|e| VecEyesError::Serialization(e.to_string()))
+        let bytes = crate::security::read_file_limited(
+            path.as_ref(),
+            crate::security::DEFAULT_MAX_MODEL_BYTES,
+            "FastTextEmbeddings::load_bincode",
+        )?;
+        let model: Self =
+            bincode::deserialize(&bytes).map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        model.validate_loaded("FastTextEmbeddings::load_bincode")?;
+        Ok(model)
+    }
+
+    fn validate_loaded(&self, context: &str) -> Result<(), VecEyesError> {
+        if self.dims == 0 || self.dims > MAX_FASTTEXT_DIMS {
+            return Err(VecEyesError::invalid_config(
+                context,
+                format!("dims must be in 1..={MAX_FASTTEXT_DIMS}, got {}", self.dims),
+            ));
+        }
+        if self.minn == 0 || self.maxn == 0 || self.minn > self.maxn {
+            return Err(VecEyesError::invalid_config(
+                context,
+                "invalid fastText n-gram range",
+            ));
+        }
+        if self.bucket_size > MAX_FASTTEXT_BUCKETS {
+            return Err(VecEyesError::invalid_config(
+                context,
+                format!("bucket_size exceeds {MAX_FASTTEXT_BUCKETS}"),
+            ));
+        }
+        for vector in self
+            .word_vectors
+            .values()
+            .chain(self.bucket_vectors.values())
+        {
+            if vector.len() != self.dims {
+                return Err(VecEyesError::invalid_config(
+                    context,
+                    "all embedding vectors must match dims",
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -451,7 +581,9 @@ pub fn embed_texts<S: AsRef<str>>(
             }
             if total_weight > 0.0 {
                 let inv = 1.0 / total_weight;
-                row.iter_mut().zip(acc.iter()).for_each(|(dst, &src)| *dst = src * inv);
+                row.iter_mut()
+                    .zip(acc.iter())
+                    .for_each(|(dst, &src)| *dst = src * inv);
             }
         });
 

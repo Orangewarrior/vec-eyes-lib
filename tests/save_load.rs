@@ -12,17 +12,16 @@
 ///   uci_sms/     – spam-vs-ham texts  (label: Spam / RawData)
 ///   uci_fraud/   – fraud-vs-normal    (label: Anomaly / RawData)
 ///   uci_biology/ – virus-vs-human     (label: Virus / RawData)
-
 use std::path::PathBuf;
 use tempfile::tempdir;
 
+use vec_eyes_lib::dataset::{load_training_samples, TrainingSample};
 use vec_eyes_lib::{
     AdvancedClassifier, AdvancedModelConfig, BayesClassifier, ClassificationLabel, Classifier,
     DistanceMetric, GradientBoostingClassifier, GradientBoostingConfig, IsolationForestClassifier,
-    IsolationForestConfig, KnnClassifier, LogisticClassifier, LogisticRegressionConfig,
-    NlpOption, RandomForestClassifier, RandomForestConfig, ScoreSumMode, SvmClassifier, SvmConfig,
+    IsolationForestConfig, KnnClassifier, LogisticClassifier, LogisticRegressionConfig, NlpOption,
+    RandomForestClassifier, RandomForestConfig, ScoreSumMode, SvmClassifier, SvmConfig,
 };
-use vec_eyes_lib::dataset::{load_training_samples, TrainingSample};
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -33,21 +32,29 @@ fn root() -> PathBuf {
 fn sms_samples() -> Vec<TrainingSample> {
     let base = root().join("uci_sms");
     let mut s = load_training_samples(&base.join("hot"), ClassificationLabel::Spam, false).unwrap();
-    s.extend(load_training_samples(&base.join("cold"), ClassificationLabel::RawData, false).unwrap());
+    s.extend(
+        load_training_samples(&base.join("cold"), ClassificationLabel::RawData, false).unwrap(),
+    );
     s
 }
 
 fn fraud_samples() -> Vec<TrainingSample> {
     let base = root().join("uci_fraud");
-    let mut s = load_training_samples(&base.join("hot"), ClassificationLabel::Anomaly, false).unwrap();
-    s.extend(load_training_samples(&base.join("cold"), ClassificationLabel::RawData, false).unwrap());
+    let mut s =
+        load_training_samples(&base.join("hot"), ClassificationLabel::Anomaly, false).unwrap();
+    s.extend(
+        load_training_samples(&base.join("cold"), ClassificationLabel::RawData, false).unwrap(),
+    );
     s
 }
 
 fn biology_samples() -> Vec<TrainingSample> {
     let base = root().join("uci_biology");
-    let mut s = load_training_samples(&base.join("hot"), ClassificationLabel::Virus, false).unwrap();
-    s.extend(load_training_samples(&base.join("cold"), ClassificationLabel::RawData, false).unwrap());
+    let mut s =
+        load_training_samples(&base.join("hot"), ClassificationLabel::Virus, false).unwrap();
+    s.extend(
+        load_training_samples(&base.join("cold"), ClassificationLabel::RawData, false).unwrap(),
+    );
     s
 }
 
@@ -82,7 +89,13 @@ fn assert_file_nonempty(path: &std::path::Path) {
 fn knn_json_round_trip_preserves_classification() {
     let samples = sms_samples();
     let clf = KnnClassifier::train(
-        &samples, NlpOption::Word2Vec, DistanceMetric::Cosine, 24, 3, None, false,
+        &samples,
+        NlpOption::Word2Vec,
+        DistanceMetric::Cosine,
+        24,
+        3,
+        None,
+        false,
     )
     .unwrap();
     let expected = top_label(&clf, SMS_PROBE);
@@ -93,14 +106,24 @@ fn knn_json_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = KnnClassifier::load(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, SMS_PROBE), "KNN JSON round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, SMS_PROBE),
+        "KNN JSON round-trip"
+    );
 }
 
 #[test]
 fn knn_bincode_round_trip_preserves_classification() {
     let samples = sms_samples();
     let clf = KnnClassifier::train(
-        &samples, NlpOption::Word2Vec, DistanceMetric::Cosine, 24, 3, None, false,
+        &samples,
+        NlpOption::Word2Vec,
+        DistanceMetric::Cosine,
+        24,
+        3,
+        None,
+        false,
     )
     .unwrap();
     let expected = top_label(&clf, SMS_PROBE);
@@ -111,14 +134,24 @@ fn knn_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = KnnClassifier::load_bincode(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, SMS_PROBE), "KNN bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, SMS_PROBE),
+        "KNN bincode round-trip"
+    );
 }
 
 #[test]
 fn knn_split_bincode_round_trip_preserves_classification() {
     let samples = sms_samples();
     let clf = KnnClassifier::train(
-        &samples, NlpOption::Word2Vec, DistanceMetric::Cosine, 24, 3, None, false,
+        &samples,
+        NlpOption::Word2Vec,
+        DistanceMetric::Cosine,
+        24,
+        3,
+        None,
+        false,
     )
     .unwrap();
     let expected = top_label(&clf, SMS_PROBE);
@@ -131,14 +164,24 @@ fn knn_split_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&ml);
 
     let loaded = KnnClassifier::load_split_bincode(&nlp, &ml).unwrap();
-    assert_eq!(expected, top_label(&loaded, SMS_PROBE), "KNN split-bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, SMS_PROBE),
+        "KNN split-bincode round-trip"
+    );
 }
 
 #[test]
 fn knn_euclidean_bincode_round_trip() {
     let samples = biology_samples();
     let clf = KnnClassifier::train(
-        &samples, NlpOption::FastText, DistanceMetric::Euclidean, 24, 3, None, false,
+        &samples,
+        NlpOption::FastText,
+        DistanceMetric::Euclidean,
+        24,
+        3,
+        None,
+        false,
     )
     .unwrap();
     let expected = top_label(&clf, BIO_PROBE);
@@ -149,7 +192,11 @@ fn knn_euclidean_bincode_round_trip() {
     assert_file_nonempty(&path);
 
     let loaded = KnnClassifier::load_bincode(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, BIO_PROBE), "KNN Euclidean bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, BIO_PROBE),
+        "KNN Euclidean bincode round-trip"
+    );
 }
 
 // ── BayesClassifier ───────────────────────────────────────────────────────────
@@ -166,7 +213,11 @@ fn bayes_json_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = BayesClassifier::load(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, SMS_PROBE), "Bayes JSON round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, SMS_PROBE),
+        "Bayes JSON round-trip"
+    );
 }
 
 #[test]
@@ -181,7 +232,11 @@ fn bayes_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = BayesClassifier::load_bincode(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, SMS_PROBE), "Bayes bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, SMS_PROBE),
+        "Bayes bincode round-trip"
+    );
 }
 
 #[test]
@@ -200,8 +255,17 @@ fn bayes_both_formats_produce_nonempty_files() {
 
     // Both formats must round-trip to the same classification result
     let expected = top_label(&clf, SMS_PROBE);
-    assert_eq!(expected, top_label(&BayesClassifier::load(&json_path).unwrap(), SMS_PROBE));
-    assert_eq!(expected, top_label(&BayesClassifier::load_bincode(&bin_path).unwrap(), SMS_PROBE));
+    assert_eq!(
+        expected,
+        top_label(&BayesClassifier::load(&json_path).unwrap(), SMS_PROBE)
+    );
+    assert_eq!(
+        expected,
+        top_label(
+            &BayesClassifier::load_bincode(&bin_path).unwrap(),
+            SMS_PROBE
+        )
+    );
 }
 
 // ── LogisticClassifier ────────────────────────────────────────────────────────
@@ -210,7 +274,11 @@ fn bayes_both_formats_produce_nonempty_files() {
 fn logistic_json_round_trip_preserves_classification() {
     let samples = sms_samples();
     let clf = LogisticClassifier::train(
-        &samples, NlpOption::TfIdf, LogisticRegressionConfig::default(), None, 32,
+        &samples,
+        NlpOption::TfIdf,
+        LogisticRegressionConfig::default(),
+        None,
+        32,
     )
     .unwrap();
     let expected = top_label(&clf, SMS_PROBE);
@@ -221,14 +289,22 @@ fn logistic_json_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = LogisticClassifier::load(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, SMS_PROBE), "Logistic JSON round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, SMS_PROBE),
+        "Logistic JSON round-trip"
+    );
 }
 
 #[test]
 fn logistic_bincode_round_trip_preserves_classification() {
     let samples = sms_samples();
     let clf = LogisticClassifier::train(
-        &samples, NlpOption::TfIdf, LogisticRegressionConfig::default(), None, 32,
+        &samples,
+        NlpOption::TfIdf,
+        LogisticRegressionConfig::default(),
+        None,
+        32,
     )
     .unwrap();
     let expected = top_label(&clf, SMS_PROBE);
@@ -239,14 +315,22 @@ fn logistic_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = LogisticClassifier::load_bincode(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, SMS_PROBE), "Logistic bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, SMS_PROBE),
+        "Logistic bincode round-trip"
+    );
 }
 
 #[test]
 fn logistic_split_bincode_round_trip_preserves_classification() {
     let samples = fraud_samples();
     let clf = LogisticClassifier::train(
-        &samples, NlpOption::Word2Vec, LogisticRegressionConfig::default(), None, 24,
+        &samples,
+        NlpOption::Word2Vec,
+        LogisticRegressionConfig::default(),
+        None,
+        24,
     )
     .unwrap();
     let expected = top_label(&clf, FRAUD_PROBE);
@@ -259,7 +343,11 @@ fn logistic_split_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&ml);
 
     let loaded = LogisticClassifier::load_split_bincode(&nlp, &ml).unwrap();
-    assert_eq!(expected, top_label(&loaded, FRAUD_PROBE), "Logistic split-bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, FRAUD_PROBE),
+        "Logistic split-bincode round-trip"
+    );
 }
 
 // ── SvmClassifier ─────────────────────────────────────────────────────────────
@@ -267,10 +355,8 @@ fn logistic_split_bincode_round_trip_preserves_classification() {
 #[test]
 fn svm_json_round_trip_preserves_classification() {
     let samples = sms_samples();
-    let clf = SvmClassifier::train(
-        &samples, NlpOption::TfIdf, SvmConfig::default(), None, 32,
-    )
-    .unwrap();
+    let clf =
+        SvmClassifier::train(&samples, NlpOption::TfIdf, SvmConfig::default(), None, 32).unwrap();
     let expected = top_label(&clf, SMS_PROBE);
 
     let dir = tempdir().unwrap();
@@ -279,14 +365,22 @@ fn svm_json_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = SvmClassifier::load(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, SMS_PROBE), "SVM JSON round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, SMS_PROBE),
+        "SVM JSON round-trip"
+    );
 }
 
 #[test]
 fn svm_bincode_round_trip_preserves_classification() {
     let samples = biology_samples();
     let clf = SvmClassifier::train(
-        &samples, NlpOption::Word2Vec, SvmConfig::default(), None, 24,
+        &samples,
+        NlpOption::Word2Vec,
+        SvmConfig::default(),
+        None,
+        24,
     )
     .unwrap();
     let expected = top_label(&clf, BIO_PROBE);
@@ -297,16 +391,18 @@ fn svm_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = SvmClassifier::load_bincode(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, BIO_PROBE), "SVM bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, BIO_PROBE),
+        "SVM bincode round-trip"
+    );
 }
 
 #[test]
 fn svm_split_bincode_round_trip_preserves_classification() {
     let samples = sms_samples();
-    let clf = SvmClassifier::train(
-        &samples, NlpOption::TfIdf, SvmConfig::default(), None, 32,
-    )
-    .unwrap();
+    let clf =
+        SvmClassifier::train(&samples, NlpOption::TfIdf, SvmConfig::default(), None, 32).unwrap();
     let expected = top_label(&clf, SMS_PROBE);
 
     let dir = tempdir().unwrap();
@@ -317,7 +413,11 @@ fn svm_split_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&ml);
 
     let loaded = SvmClassifier::load_split_bincode(&nlp, &ml).unwrap();
-    assert_eq!(expected, top_label(&loaded, SMS_PROBE), "SVM split-bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, SMS_PROBE),
+        "SVM split-bincode round-trip"
+    );
 }
 
 // ── RandomForestClassifier ────────────────────────────────────────────────────
@@ -326,7 +426,11 @@ fn svm_split_bincode_round_trip_preserves_classification() {
 fn random_forest_json_round_trip_preserves_classification() {
     let samples = sms_samples();
     let clf = RandomForestClassifier::train(
-        &samples, NlpOption::TfIdf, RandomForestConfig::default(), None, 32,
+        &samples,
+        NlpOption::TfIdf,
+        RandomForestConfig::default(),
+        None,
+        32,
     )
     .unwrap();
     let expected = top_label(&clf, SMS_PROBE);
@@ -337,14 +441,22 @@ fn random_forest_json_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = RandomForestClassifier::load(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, SMS_PROBE), "RandomForest JSON round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, SMS_PROBE),
+        "RandomForest JSON round-trip"
+    );
 }
 
 #[test]
 fn random_forest_bincode_round_trip_preserves_classification() {
     let samples = fraud_samples();
     let clf = RandomForestClassifier::train(
-        &samples, NlpOption::Word2Vec, RandomForestConfig::default(), None, 24,
+        &samples,
+        NlpOption::Word2Vec,
+        RandomForestConfig::default(),
+        None,
+        24,
     )
     .unwrap();
     let expected = top_label(&clf, FRAUD_PROBE);
@@ -355,14 +467,22 @@ fn random_forest_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = RandomForestClassifier::load_bincode(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, FRAUD_PROBE), "RandomForest bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, FRAUD_PROBE),
+        "RandomForest bincode round-trip"
+    );
 }
 
 #[test]
 fn random_forest_split_bincode_round_trip_preserves_classification() {
     let samples = biology_samples();
     let clf = RandomForestClassifier::train(
-        &samples, NlpOption::Word2Vec, RandomForestConfig::default(), None, 24,
+        &samples,
+        NlpOption::Word2Vec,
+        RandomForestConfig::default(),
+        None,
+        24,
     )
     .unwrap();
     let expected = top_label(&clf, BIO_PROBE);
@@ -375,7 +495,11 @@ fn random_forest_split_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&ml);
 
     let loaded = RandomForestClassifier::load_split_bincode(&nlp, &ml).unwrap();
-    assert_eq!(expected, top_label(&loaded, BIO_PROBE), "RandomForest split-bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, BIO_PROBE),
+        "RandomForest split-bincode round-trip"
+    );
 }
 
 // ── GradientBoostingClassifier ────────────────────────────────────────────────
@@ -384,7 +508,11 @@ fn random_forest_split_bincode_round_trip_preserves_classification() {
 fn gradient_boosting_json_round_trip_preserves_classification() {
     let samples = sms_samples();
     let clf = GradientBoostingClassifier::train(
-        &samples, NlpOption::TfIdf, GradientBoostingConfig::default(), None, 32,
+        &samples,
+        NlpOption::TfIdf,
+        GradientBoostingConfig::default(),
+        None,
+        32,
     )
     .unwrap();
     let expected = top_label(&clf, SMS_PROBE);
@@ -395,14 +523,22 @@ fn gradient_boosting_json_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = GradientBoostingClassifier::load(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, SMS_PROBE), "GradientBoosting JSON round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, SMS_PROBE),
+        "GradientBoosting JSON round-trip"
+    );
 }
 
 #[test]
 fn gradient_boosting_bincode_round_trip_preserves_classification() {
     let samples = fraud_samples();
     let clf = GradientBoostingClassifier::train(
-        &samples, NlpOption::Word2Vec, GradientBoostingConfig::default(), None, 24,
+        &samples,
+        NlpOption::Word2Vec,
+        GradientBoostingConfig::default(),
+        None,
+        24,
     )
     .unwrap();
     let expected = top_label(&clf, FRAUD_PROBE);
@@ -413,14 +549,22 @@ fn gradient_boosting_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = GradientBoostingClassifier::load_bincode(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, FRAUD_PROBE), "GradientBoosting bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, FRAUD_PROBE),
+        "GradientBoosting bincode round-trip"
+    );
 }
 
 #[test]
 fn gradient_boosting_split_bincode_round_trip_preserves_classification() {
     let samples = sms_samples();
     let clf = GradientBoostingClassifier::train(
-        &samples, NlpOption::TfIdf, GradientBoostingConfig::default(), None, 32,
+        &samples,
+        NlpOption::TfIdf,
+        GradientBoostingConfig::default(),
+        None,
+        32,
     )
     .unwrap();
     let expected = top_label(&clf, SMS_PROBE);
@@ -433,7 +577,11 @@ fn gradient_boosting_split_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&ml);
 
     let loaded = GradientBoostingClassifier::load_split_bincode(&nlp, &ml).unwrap();
-    assert_eq!(expected, top_label(&loaded, SMS_PROBE), "GradientBoosting split-bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, SMS_PROBE),
+        "GradientBoosting split-bincode round-trip"
+    );
 }
 
 // ── IsolationForestClassifier ─────────────────────────────────────────────────
@@ -459,7 +607,11 @@ fn isolation_forest_json_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = IsolationForestClassifier::load(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, FRAUD_PROBE), "IsolationForest JSON round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, FRAUD_PROBE),
+        "IsolationForest JSON round-trip"
+    );
 }
 
 #[test]
@@ -483,7 +635,11 @@ fn isolation_forest_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&path);
 
     let loaded = IsolationForestClassifier::load_bincode(&path).unwrap();
-    assert_eq!(expected, top_label(&loaded, FRAUD_PROBE), "IsolationForest bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, FRAUD_PROBE),
+        "IsolationForest bincode round-trip"
+    );
 }
 
 #[test]
@@ -509,7 +665,11 @@ fn isolation_forest_split_bincode_round_trip_preserves_classification() {
     assert_file_nonempty(&ml);
 
     let loaded = IsolationForestClassifier::load_split_bincode(&nlp, &ml).unwrap();
-    assert_eq!(expected, top_label(&loaded, FRAUD_PROBE), "IsolationForest split-bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, FRAUD_PROBE),
+        "IsolationForest split-bincode round-trip"
+    );
 }
 
 // ── AdvancedClassifier (generic wrapper) ──────────────────────────────────────
@@ -541,7 +701,11 @@ fn advanced_classifier_split_bincode_reloads_correctly() {
     assert_file_nonempty(&ml);
 
     let loaded = AdvancedClassifier::load_split_bincode(&nlp, &ml).unwrap();
-    assert_eq!(expected, top_label(&loaded, BIO_PROBE), "AdvancedClassifier split-bincode round-trip");
+    assert_eq!(
+        expected,
+        top_label(&loaded, BIO_PROBE),
+        "AdvancedClassifier split-bincode round-trip"
+    );
 }
 
 // ── Cross-format size comparison ──────────────────────────────────────────────
@@ -550,7 +714,11 @@ fn advanced_classifier_split_bincode_reloads_correctly() {
 fn bincode_files_are_consistently_smaller_than_json() {
     let samples = fraud_samples();
     let clf = RandomForestClassifier::train(
-        &samples, NlpOption::Word2Vec, RandomForestConfig::default(), None, 24,
+        &samples,
+        NlpOption::Word2Vec,
+        RandomForestConfig::default(),
+        None,
+        24,
     )
     .unwrap();
 

@@ -35,55 +35,69 @@ The library can load a YAML pipeline file that defines:
 pub mod advanced_models;
 pub mod builders;
 pub mod classifier;
-pub mod compat;
 pub mod classifiers;
-pub mod factory;
+pub mod compat;
 pub mod config;
 pub mod dataset;
 pub mod error;
+pub mod factory;
 pub mod labels;
 pub mod matcher;
+pub(crate) mod math;
 pub mod metrics;
 pub mod nlp;
+pub(crate) mod parallel;
 pub mod report;
 pub mod security;
-pub(crate) mod parallel;
-pub(crate) mod math;
 
+pub use advanced_models::{
+    AdvancedClassifier,
+    AdvancedModelConfig,
+    // Standalone typed classifiers — same API as KnnClassifier / BayesClassifier
+    GradientBoostingClassifier,
+    GradientBoostingConfig,
+    IsolationForestClassifier,
+    IsolationForestConfig,
+    LogisticClassifier,
+    LogisticRegressionConfig,
+    RandomForestClassifier,
+    RandomForestConfig,
+    RandomForestMaxFeatures,
+    RandomForestMode,
+    SvmClassifier,
+    SvmConfig,
+    SvmKernel,
+};
 pub use classifier::{
     BayesBuilder, BayesClassifier, ClassificationResult, Classifier, ClassifierBuilder,
     ClassifierFactory, ClassifierMethod, DistanceMetric, EnsembleClassifier, EnsembleStrategy,
     ExplainableClassifier, KnnBuilder, KnnClassifier, MethodKind, TokenContribution,
 };
-pub use advanced_models::{
-    AdvancedClassifier, AdvancedModelConfig, GradientBoostingConfig, IsolationForestConfig,
-    LogisticRegressionConfig, RandomForestConfig, RandomForestMaxFeatures, RandomForestMode,
-    SvmConfig, SvmKernel,
-    // Standalone typed classifiers — same API as KnnClassifier / BayesClassifier
-    GradientBoostingClassifier, IsolationForestClassifier, LogisticClassifier,
-    RandomForestClassifier, SvmClassifier,
-};
 pub use config::{
-    DataConfig, ExtraMatchConfig, ExtraMatchEngine, ModelConfig, PipelineConfig,
-    RecursiveMode, RulesFile, ScoreSumMode,
+    DataConfig, ExtraMatchConfig, ExtraMatchEngine, ModelConfig, PipelineConfig, RecursiveMode,
+    RulesFile, ScoreSumMode,
 };
-pub use dataset::{collect_files_recursively, load_training_samples, read_text_file, training_sample_iter};
+pub use dataset::{
+    collect_files_recursively, load_training_samples, read_text_file, training_sample_iter,
+};
 pub use error::VecEyesError;
 pub use labels::ClassificationLabel;
 pub use matcher::{
-    AlertHit, JsonRule, MatchRule, MatcherBackend, MatcherFactory, RuleMatcher,
-    RuleSet, ScoringEngine,
+    AlertHit, JsonRule, MatchRule, MatcherBackend, MatcherFactory, RuleMatcher, RuleSet,
+    ScoringEngine,
 };
-pub use nlp::{FastTextConfig, FastTextConfigBuilder, NlpOption};
+pub use nlp::external_embeddings::ExternalEmbeddings;
 pub use nlp::fasttext_bin::{FastTextBin, FastTextEmbeddings};
 pub use nlp::word2vec_bin::{Word2VecBin, Word2VecEmbeddings};
-pub use nlp::external_embeddings::ExternalEmbeddings;
-pub use report::{ClassificationReport, ClassificationRecord};
+pub use nlp::{FastTextConfig, FastTextConfigBuilder, NlpOption};
+pub use report::{ClassificationRecord, ClassificationReport};
 
 pub use dataset::read_text_file_limited;
 
 #[allow(deprecated)]
-pub use compat::{alerts, EngineBuilder, NlpPipeline, NlpPipelineBuilder, OutputWriters, RepresentationKind};
-pub use factory::{TypedClassifierBuilder, ClassifierSpec, BayesSpec, KnnSpec, AdvancedSpec};
+pub use compat::{
+    alerts, EngineBuilder, NlpPipeline, NlpPipelineBuilder, OutputWriters, RepresentationKind,
+};
+pub use factory::{AdvancedSpec, BayesSpec, ClassifierSpec, KnnSpec, TypedClassifierBuilder};
 
 pub use builders::Builder;

@@ -1,12 +1,12 @@
 use crate::advanced_models::{
-    AdvancedModelConfig, GradientBoostingConfig, IsolationForestConfig,
-    LogisticRegressionConfig, RandomForestConfig, RandomForestMaxFeatures, RandomForestMode,
-    SvmConfig, SvmKernel,
+    AdvancedModelConfig, GradientBoostingConfig, IsolationForestConfig, LogisticRegressionConfig,
+    RandomForestConfig, RandomForestMaxFeatures, RandomForestMode, SvmConfig, SvmKernel,
 };
 use crate::classifier::{ClassifierBuilder, MethodKind};
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::nlp::NlpOption;
+use crate::security::MAX_CONFIG_THREADS;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -14,32 +14,32 @@ const MAX_RULES_FILE_BYTES: u64 = 512 * 1024;
 
 // ── Utility enums (unchanged) ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecursiveMode {
     #[serde(alias = "ON", alias = "on")]
+    #[default]
     On,
     #[serde(alias = "OFF", alias = "off")]
     Off,
 }
-impl Default for RecursiveMode {
-    fn default() -> Self { Self::On }
-}
 impl RecursiveMode {
-    pub fn is_on(self) -> bool { matches!(self, Self::On) }
+    pub fn is_on(self) -> bool {
+        matches!(self, Self::On)
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScoreSumMode {
     #[serde(alias = "ON", alias = "on")]
     On,
     #[serde(alias = "OFF", alias = "off")]
+    #[default]
     Off,
 }
-impl Default for ScoreSumMode {
-    fn default() -> Self { Self::Off }
-}
 impl ScoreSumMode {
-    pub fn is_on(self) -> bool { matches!(self, Self::On) }
+    pub fn is_on(self) -> bool {
+        matches!(self, Self::On)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,17 +94,39 @@ pub struct PipelineConfig {
 }
 
 // ── Default helpers for serde ─────────────────────────────────────────────────
-fn rf_max_depth_default() -> usize { 6 }
-fn rf_min_samples_split_default() -> usize { 2 }
-fn rf_min_samples_leaf_default() -> usize { 1 }
-fn rf_bootstrap_default() -> bool { true }
-fn lr_lambda_default() -> f32 { 1e-3 }
-fn svm_lr_default() -> f32 { 0.08 }
-fn svm_epochs_default() -> usize { 40 }
-fn svm_gamma_default() -> f32 { 0.35 }
-fn svm_degree_default() -> usize { 2 }
-fn gb_max_depth_default() -> usize { 1 }
-fn if_subsample_size_default() -> usize { 64 }
+fn rf_max_depth_default() -> usize {
+    6
+}
+fn rf_min_samples_split_default() -> usize {
+    2
+}
+fn rf_min_samples_leaf_default() -> usize {
+    1
+}
+fn rf_bootstrap_default() -> bool {
+    true
+}
+fn lr_lambda_default() -> f32 {
+    1e-3
+}
+fn svm_lr_default() -> f32 {
+    0.08
+}
+fn svm_epochs_default() -> usize {
+    40
+}
+fn svm_gamma_default() -> f32 {
+    0.35
+}
+fn svm_degree_default() -> usize {
+    2
+}
+fn gb_max_depth_default() -> usize {
+    1
+}
+fn if_subsample_size_default() -> usize {
+    64
+}
 
 // ── ModelConfig ───────────────────────────────────────────────────────────────
 
@@ -226,7 +248,11 @@ impl ModelConfig {
             ..Default::default()
         };
         match self {
-            Self::LogisticRegression { learning_rate, epochs, lambda } => {
+            Self::LogisticRegression {
+                learning_rate,
+                epochs,
+                lambda,
+            } => {
                 cfg.logistic = Some(LogisticRegressionConfig {
                     learning_rate: *learning_rate,
                     epochs: *epochs,
@@ -234,9 +260,15 @@ impl ModelConfig {
                 });
             }
             Self::RandomForest {
-                n_trees, max_depth, mode, max_features,
-                min_samples_split, min_samples_leaf,
-                bootstrap, oob_score, random_seed,
+                n_trees,
+                max_depth,
+                mode,
+                max_features,
+                min_samples_split,
+                min_samples_leaf,
+                bootstrap,
+                oob_score,
+                random_seed,
             } => {
                 cfg.random_forest = Some(RandomForestConfig {
                     mode: mode.clone(),
@@ -250,7 +282,15 @@ impl ModelConfig {
                     random_seed: *random_seed,
                 });
             }
-            Self::Svm { kernel, c, learning_rate, epochs, gamma, degree, coef0 } => {
+            Self::Svm {
+                kernel,
+                c,
+                learning_rate,
+                epochs,
+                gamma,
+                degree,
+                coef0,
+            } => {
                 cfg.svm = Some(SvmConfig {
                     kernel: kernel.clone(),
                     c: *c,
@@ -261,14 +301,22 @@ impl ModelConfig {
                     coef0: *coef0,
                 });
             }
-            Self::GradientBoosting { n_estimators, learning_rate, max_depth } => {
+            Self::GradientBoosting {
+                n_estimators,
+                learning_rate,
+                max_depth,
+            } => {
                 cfg.gradient_boosting = Some(GradientBoostingConfig {
                     n_estimators: *n_estimators,
                     learning_rate: *learning_rate,
                     max_depth: *max_depth,
                 });
             }
-            Self::IsolationForest { n_trees, contamination, subsample_size } => {
+            Self::IsolationForest {
+                n_trees,
+                contamination,
+                subsample_size,
+            } => {
                 cfg.isolation_forest = Some(IsolationForestConfig {
                     n_trees: *n_trees,
                     contamination: *contamination,
@@ -301,14 +349,24 @@ impl ModelConfig {
                     ));
                 }
             }
-            Self::LogisticRegression { learning_rate, epochs, .. } => {
+            Self::LogisticRegression {
+                learning_rate,
+                epochs,
+                ..
+            } => {
                 if *learning_rate <= 0.0 || *epochs == 0 {
                     return Err(VecEyesError::InvalidConfig(
                         "YAML validation error: learning_rate must be > 0 and epochs >= 1".into(),
                     ));
                 }
             }
-            Self::RandomForest { n_trees, min_samples_leaf, oob_score, bootstrap, .. } => {
+            Self::RandomForest {
+                n_trees,
+                min_samples_leaf,
+                oob_score,
+                bootstrap,
+                ..
+            } => {
                 if *n_trees == 0 {
                     return Err(VecEyesError::InvalidConfig(
                         "YAML validation error: n_trees must be >= 1".into(),
@@ -332,14 +390,22 @@ impl ModelConfig {
                     ));
                 }
             }
-            Self::GradientBoosting { n_estimators, learning_rate, .. } => {
+            Self::GradientBoosting {
+                n_estimators,
+                learning_rate,
+                ..
+            } => {
                 if *n_estimators == 0 || *learning_rate <= 0.0 {
                     return Err(VecEyesError::InvalidConfig(
                         "YAML validation error: n_estimators >= 1 and learning_rate > 0".into(),
                     ));
                 }
             }
-            Self::IsolationForest { n_trees, contamination, .. } => {
+            Self::IsolationForest {
+                n_trees,
+                contamination,
+                ..
+            } => {
                 if *n_trees == 0 || *contamination <= 0.0 || *contamination >= 0.5 {
                     return Err(VecEyesError::InvalidConfig(
                         "YAML validation error: n_trees >= 1 and contamination in (0, 0.5)".into(),
@@ -436,6 +502,16 @@ impl RulesFile {
                 "threads must be >= 1",
             ));
         }
+        if self
+            .pipeline
+            .threads
+            .is_some_and(|threads| threads > MAX_CONFIG_THREADS)
+        {
+            return Err(VecEyesError::invalid_config(
+                "config::RulesFile::validate",
+                format!("threads must be <= {MAX_CONFIG_THREADS}"),
+            ));
+        }
         if self.pipeline.embedding_dimensions == Some(0) {
             return Err(VecEyesError::InvalidConfig(
                 "YAML validation error: embedding_dimensions must be >= 1".into(),
@@ -461,6 +537,12 @@ impl RulesFile {
         for extra in &self.extra_match {
             validate_maybe_relative_path(&extra.path, allowed_base)?;
         }
+        if let Some(path) = &self.csv_output {
+            crate::security::sanitize_output_path_with_base(path, allowed_base)?;
+        }
+        if let Some(path) = &self.json_output {
+            crate::security::sanitize_output_path_with_base(path, allowed_base)?;
+        }
         Ok(())
     }
 
@@ -471,32 +553,34 @@ impl RulesFile {
 
     pub fn apply_to_builder(&self, mut builder: ClassifierBuilder) -> ClassifierBuilder {
         crate::nlp::set_security_normalization_enabled(
-            self.pipeline.security_normalize_obfuscation.unwrap_or(false),
+            self.pipeline
+                .security_normalize_obfuscation
+                .unwrap_or(false),
         );
         builder = builder
             .nlp(self.pipeline.nlp.clone())
             .hot_path(self.data.hot_test_path.clone())
             .cold_path(self.data.cold_test_path.clone())
             .hot_label(
-                self.data.hot_label
+                self.data
+                    .hot_label
                     .clone()
                     .unwrap_or(ClassificationLabel::WebAttack),
             )
             .cold_label(
-                self.data.cold_label
+                self.data
+                    .cold_label
                     .clone()
                     .unwrap_or(ClassificationLabel::RawData),
             )
             .recursive(self.data.recursive_way.is_on())
             .threads(self.pipeline.threads)
-            .embedding_dimensions(
-                self.pipeline.embedding_dimensions.unwrap_or(32),
-            );
+            .embedding_dimensions(self.pipeline.embedding_dimensions.unwrap_or(32));
         builder = self.model.apply_to_builder(builder);
-        builder.advanced_config(self.model.to_advanced_config(
-            self.pipeline.threads,
-            self.pipeline.embedding_dimensions,
-        ))
+        builder.advanced_config(
+            self.model
+                .to_advanced_config(self.pipeline.threads, self.pipeline.embedding_dimensions),
+        )
     }
 
     pub fn from_yaml_path<P: AsRef<Path>>(path: P) -> Result<Self, VecEyesError> {

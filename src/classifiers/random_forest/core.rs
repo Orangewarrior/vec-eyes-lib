@@ -4,27 +4,43 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 
 use crate::advanced_models::{LabelEncoder, RandomForestConfig, RandomForestMode};
-use crate::math::softmax_scores;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
+use crate::math::softmax_scores;
 use crate::nlp::DenseMatrix;
 use crate::parallel::install_pool;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum TreeNode {
     Leaf(Box<[f32]>),
-    Split { feature: usize, threshold: f32, left: Box<TreeNode>, right: Box<TreeNode> },
+    Split {
+        feature: usize,
+        threshold: f32,
+        left: Box<TreeNode>,
+        right: Box<TreeNode>,
+    },
 }
 
 impl TreeNode {
     fn accumulate(&self, row: &[f32], acc: &mut [f32]) {
         match self {
             Self::Leaf(values) => {
-                for (a, v) in acc.iter_mut().zip(values.iter()) { *a += *v; }
+                for (a, v) in acc.iter_mut().zip(values.iter()) {
+                    *a += *v;
+                }
             }
-            Self::Split { feature, threshold, left, right } => {
-                if row[*feature] <= *threshold { left.accumulate(row, acc); } else { right.accumulate(row, acc); }
+            Self::Split {
+                feature,
+                threshold,
+                left,
+                right,
+            } => {
+                if row[*feature] <= *threshold {
+                    left.accumulate(row, acc);
+                } else {
+                    right.accumulate(row, acc);
+                }
             }
         }
     }
@@ -32,10 +48,16 @@ impl TreeNode {
 
 fn class_distribution(y: &[usize], num_classes: usize) -> Vec<f32> {
     let mut counts = vec![0.0f32; num_classes];
-    if y.is_empty() { return counts; }
-    for &label in y { counts[label] += 1.0; }
+    if y.is_empty() {
+        return counts;
+    }
+    for &label in y {
+        counts[label] += 1.0;
+    }
     let inv = 1.0 / y.len() as f32;
-    for item in &mut counts { *item *= inv; }
+    for item in &mut counts {
+        *item *= inv;
+    }
     counts
 }
 fn gini(y: &[usize], num_classes: usize) -> f32 {
@@ -43,58 +65,109 @@ fn gini(y: &[usize], num_classes: usize) -> f32 {
     1.0 - dist.iter().map(|p| p * p).sum::<f32>()
 }
 #[derive(Debug, Clone, Copy)]
-enum SplitStrategy { Standard, ExtraTrees }
+enum SplitStrategy {
+    Standard,
+    ExtraTrees,
+}
 
-fn build_tree(x: &DenseMatrix, y: &[usize], rows: &[usize], num_classes: usize, depth: usize, max_depth: usize, min_leaf: usize, min_samples_split: usize, feature_budget: usize, strategy: SplitStrategy, rng: &mut StdRng, importances: &mut [f32], total_rows: usize) -> TreeNode {
-    if rows.is_empty() || depth >= max_depth || rows.len() < min_samples_split.max(2) || rows.len() <= min_leaf {
-        let labels: Vec<usize> = rows.iter().map(|&idx| y[idx]).collect();
-        return TreeNode::Leaf(class_distribution(&labels, num_classes).into_boxed_slice());
+struct TreeBuildContext<'a> {
+    x: &'a DenseMatrix,
+    y: &'a [usize],
+    num_classes: usize,
+    max_depth: usize,
+    min_leaf: usize,
+    min_samples_split: usize,
+    feature_budget: usize,
+    strategy: SplitStrategy,
+    total_rows: usize,
+}
+
+fn build_tree(
+    ctx: &TreeBuildContext<'_>,
+    rows: &[usize],
+    depth: usize,
+    rng: &mut StdRng,
+    importances: &mut [f32],
+) -> TreeNode {
+    if rows.is_empty()
+        || depth >= ctx.max_depth
+        || rows.len() < ctx.min_samples_split.max(2)
+        || rows.len() <= ctx.min_leaf
+    {
+        let labels: Vec<usize> = rows.iter().map(|&idx| ctx.y[idx]).collect();
+        return TreeNode::Leaf(class_distribution(&labels, ctx.num_classes).into_boxed_slice());
     }
-    let first = y[rows[0]];
-    if rows.iter().all(|&idx| y[idx] == first) {
-        let labels: Vec<usize> = rows.iter().map(|&idx| y[idx]).collect();
-        return TreeNode::Leaf(class_distribution(&labels, num_classes).into_boxed_slice());
+    let first = ctx.y[rows[0]];
+    if rows.iter().all(|&idx| ctx.y[idx] == first) {
+        let labels: Vec<usize> = rows.iter().map(|&idx| ctx.y[idx]).collect();
+        return TreeNode::Leaf(class_distribution(&labels, ctx.num_classes).into_boxed_slice());
     }
-    let features = x.shape()[1];
+    let features = ctx.x.shape()[1];
     let mut all_features: Vec<usize> = (0..features).collect();
     all_features.shuffle(rng);
-    all_features.truncate(feature_budget.max(1).min(features));
-    let parent_labels: Vec<usize> = rows.iter().map(|&idx| y[idx]).collect();
-    let parent_gini = gini(&parent_labels, num_classes);
+    all_features.truncate(ctx.feature_budget.max(1).min(features));
+    let parent_labels: Vec<usize> = rows.iter().map(|&idx| ctx.y[idx]).collect();
+    let parent_gini = gini(&parent_labels, ctx.num_classes);
     let mut best_gain = -1.0f32;
     let mut best_split: Option<(usize, f32, Vec<usize>, Vec<usize>)> = None;
     for &feature in &all_features {
-        let mut values: Vec<f32> = rows.iter().map(|&idx| x[[idx, feature]]).collect();
-        values.sort_by(|a,b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        values.dedup_by(|a,b| (*a-*b).abs() < 1e-6);
-        if values.len() < 2 { continue; }
-        let thresholds: Vec<f32> = match strategy {
-            SplitStrategy::Standard => values.windows(2).map(|w| (w[0]+w[1])*0.5).collect(),
+        let mut values: Vec<f32> = rows.iter().map(|&idx| ctx.x[[idx, feature]]).collect();
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        values.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+        if values.len() < 2 {
+            continue;
+        }
+        let thresholds: Vec<f32> = match ctx.strategy {
+            SplitStrategy::Standard => values.windows(2).map(|w| (w[0] + w[1]) * 0.5).collect(),
             SplitStrategy::ExtraTrees => {
-                let min=*values.first().unwrap_or(&0.0); let max=*values.last().unwrap_or(&min);
-                if (max-min).abs() < 1e-6 { Vec::new() } else { let tries=values.len().min(8).max(2); (0..tries).map(|_| rng.random_range(min..max)).collect() }
+                let min = *values.first().unwrap_or(&0.0);
+                let max = *values.last().unwrap_or(&min);
+                if (max - min).abs() < 1e-6 {
+                    Vec::new()
+                } else {
+                    let tries = values.len().clamp(2, 8);
+                    (0..tries).map(|_| rng.random_range(min..max)).collect()
+                }
             }
         };
         for threshold in thresholds {
-            let mut left=Vec::new(); let mut right=Vec::new();
-            for &row in rows { if x[[row, feature]] <= threshold { left.push(row); } else { right.push(row); } }
-            if left.len() < min_leaf || right.len() < min_leaf { continue; }
-            let left_labels: Vec<usize> = left.iter().map(|&idx| y[idx]).collect();
-            let right_labels: Vec<usize> = right.iter().map(|&idx| y[idx]).collect();
-            let gain = parent_gini - (left.len() as f32 / rows.len() as f32) * gini(&left_labels, num_classes) - (right.len() as f32 / rows.len() as f32) * gini(&right_labels, num_classes);
-            if gain > best_gain { best_gain = gain; best_split = Some((feature, threshold, left, right)); }
+            let mut left = Vec::new();
+            let mut right = Vec::new();
+            for &row in rows {
+                if ctx.x[[row, feature]] <= threshold {
+                    left.push(row);
+                } else {
+                    right.push(row);
+                }
+            }
+            if left.len() < ctx.min_leaf || right.len() < ctx.min_leaf {
+                continue;
+            }
+            let left_labels: Vec<usize> = left.iter().map(|&idx| ctx.y[idx]).collect();
+            let right_labels: Vec<usize> = right.iter().map(|&idx| ctx.y[idx]).collect();
+            let gain = parent_gini
+                - (left.len() as f32 / rows.len() as f32) * gini(&left_labels, ctx.num_classes)
+                - (right.len() as f32 / rows.len() as f32) * gini(&right_labels, ctx.num_classes);
+            if gain > best_gain {
+                best_gain = gain;
+                best_split = Some((feature, threshold, left, right));
+            }
         }
     }
     if let Some((feature, threshold, left, right)) = best_split {
-        if feature < importances.len() { importances[feature] += best_gain.max(0.0) * (rows.len() as f32 / total_rows.max(1) as f32); }
+        if feature < importances.len() {
+            importances[feature] +=
+                best_gain.max(0.0) * (rows.len() as f32 / ctx.total_rows.max(1) as f32);
+        }
         TreeNode::Split {
-            feature, threshold,
-            left: Box::new(build_tree(x, y, &left, num_classes, depth+1, max_depth, min_leaf, min_samples_split, feature_budget, strategy, rng, importances, total_rows)),
-            right: Box::new(build_tree(x, y, &right, num_classes, depth+1, max_depth, min_leaf, min_samples_split, feature_budget, strategy, rng, importances, total_rows)),
+            feature,
+            threshold,
+            left: Box::new(build_tree(ctx, &left, depth + 1, rng, importances)),
+            right: Box::new(build_tree(ctx, &right, depth + 1, rng, importances)),
         }
     } else {
-        let labels: Vec<usize> = rows.iter().map(|&idx| y[idx]).collect();
-        TreeNode::Leaf(class_distribution(&labels, num_classes).into_boxed_slice())
+        let labels: Vec<usize> = rows.iter().map(|&idx| ctx.y[idx]).collect();
+        TreeNode::Leaf(class_distribution(&labels, ctx.num_classes).into_boxed_slice())
     }
 }
 
@@ -107,41 +180,90 @@ pub(crate) struct RandomForestModel {
 }
 
 impl RandomForestModel {
-    pub(crate) fn fit(matrix: &DenseMatrix, samples: &[TrainingSample], config: &RandomForestConfig, threads: Option<usize>) -> Result<Self, VecEyesError> {
+    pub(crate) fn fit(
+        matrix: &DenseMatrix,
+        samples: &[TrainingSample],
+        config: &RandomForestConfig,
+        threads: Option<usize>,
+    ) -> Result<Self, VecEyesError> {
         let encoder = LabelEncoder::fit(samples);
-        let y_idx: Vec<usize> = samples.iter().map(|s| encoder.encode(&s.label)).collect::<Result<_, _>>()?;
+        let y_idx: Vec<usize> = samples
+            .iter()
+            .map(|s| encoder.encode(&s.label))
+            .collect::<Result<_, _>>()?;
         let rows: Vec<usize> = (0..matrix.shape()[0]).collect();
         let num_classes = encoder.labels.len();
         let feature_budget = config.max_features.resolve(matrix.shape()[1]);
-        let strategy = match config.mode { RandomForestMode::ExtraTrees => SplitStrategy::ExtraTrees, RandomForestMode::Standard | RandomForestMode::Balanced => SplitStrategy::Standard };
+        let strategy = match config.mode {
+            RandomForestMode::ExtraTrees => SplitStrategy::ExtraTrees,
+            RandomForestMode::Standard | RandomForestMode::Balanced => SplitStrategy::Standard,
+        };
         let feature_count = matrix.shape()[1];
         let built: Vec<(TreeNode, Option<Vec<usize>>, Vec<f32>)> = install_pool(threads, || {
-            (0..config.n_trees).into_par_iter().map(|tree_id| {
-                let base_seed = config.random_seed.unwrap_or(0xC0FFEE);
-                let mut rng = StdRng::seed_from_u64(base_seed.wrapping_add(tree_id as u64 * 17));
-                let boot_rows = if config.bootstrap {
-                    match config.mode {
-                        RandomForestMode::Balanced => Self::balanced_bootstrap(&y_idx, rows.len(), &mut rng),
-                        RandomForestMode::Standard | RandomForestMode::ExtraTrees => (0..rows.len()).map(|_| rng.random_range(0..rows.len())).collect::<Vec<_>>()
-                    }
-                } else { rows.clone() };
-                let oob_rows = if config.bootstrap && config.oob_score {
-                    let mut used = vec![false; rows.len()];
-                    for &idx in &boot_rows { used[idx]=true; }
-                    Some(rows.iter().copied().filter(|idx| !used[*idx]).collect::<Vec<_>>())
-                } else { None };
-                let mut importances = vec![0.0f32; feature_count];
-                let tree = build_tree(matrix, &y_idx, &boot_rows, num_classes, 0, config.max_depth.max(1), config.min_samples_leaf.max(1), config.min_samples_split.max(2), feature_budget, strategy, &mut rng, &mut importances, rows.len());
-                (tree, oob_rows, importances)
-            }).collect()
+            (0..config.n_trees)
+                .into_par_iter()
+                .map(|tree_id| {
+                    let base_seed = config.random_seed.unwrap_or(0xC0FFEE);
+                    let mut rng =
+                        StdRng::seed_from_u64(base_seed.wrapping_add(tree_id as u64 * 17));
+                    let boot_rows = if config.bootstrap {
+                        match config.mode {
+                            RandomForestMode::Balanced => {
+                                Self::balanced_bootstrap(&y_idx, rows.len(), &mut rng)
+                            }
+                            RandomForestMode::Standard | RandomForestMode::ExtraTrees => (0..rows
+                                .len())
+                                .map(|_| rng.random_range(0..rows.len()))
+                                .collect::<Vec<_>>(),
+                        }
+                    } else {
+                        rows.clone()
+                    };
+                    let oob_rows = if config.bootstrap && config.oob_score {
+                        let mut used = vec![false; rows.len()];
+                        for &idx in &boot_rows {
+                            used[idx] = true;
+                        }
+                        Some(
+                            rows.iter()
+                                .copied()
+                                .filter(|idx| !used[*idx])
+                                .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        None
+                    };
+                    let mut importances = vec![0.0f32; feature_count];
+                    let tree_context = TreeBuildContext {
+                        x: matrix,
+                        y: &y_idx,
+                        num_classes,
+                        max_depth: config.max_depth.max(1),
+                        min_leaf: config.min_samples_leaf.max(1),
+                        min_samples_split: config.min_samples_split.max(2),
+                        feature_budget,
+                        strategy,
+                        total_rows: rows.len(),
+                    };
+                    let tree = build_tree(&tree_context, &boot_rows, 0, &mut rng, &mut importances);
+                    (tree, oob_rows, importances)
+                })
+                .collect()
         });
         let trees: Vec<TreeNode> = built.iter().map(|(tree, _, _)| tree.clone()).collect();
         let mut feature_importances = vec![0.0f32; feature_count];
         for (_, _, imp) in &built {
-            feature_importances.iter_mut().zip(imp.iter()).for_each(|(a, &v)| *a += v);
+            feature_importances
+                .iter_mut()
+                .zip(imp.iter())
+                .for_each(|(a, &v)| *a += v);
         }
         let total_imp: f32 = feature_importances.iter().sum();
-        if total_imp > 0.0 { for v in &mut feature_importances { *v /= total_imp; } }
+        if total_imp > 0.0 {
+            for v in &mut feature_importances {
+                *v /= total_imp;
+            }
+        }
         let oob_score = if config.oob_score && config.bootstrap {
             let mut aggregated = vec![vec![0.0f32; num_classes]; rows.len()];
             let mut votes = vec![0usize; rows.len()];
@@ -151,34 +273,63 @@ impl RandomForestModel {
                         let row = matrix.index_axis(Axis(0), row_idx).to_vec();
                         let mut prediction = vec![0.0f32; num_classes];
                         tree.accumulate(&row, &mut prediction);
-                        for (class_idx, value) in prediction.into_iter().enumerate() { aggregated[row_idx][class_idx] += value; }
+                        for (class_idx, value) in prediction.into_iter().enumerate() {
+                            aggregated[row_idx][class_idx] += value;
+                        }
                         votes[row_idx] += 1;
                     }
                 }
             }
-            let mut correct=0usize; let mut seen=0usize;
+            let mut correct = 0usize;
+            let mut seen = 0usize;
             for row_idx in 0..rows.len() {
-                if votes[row_idx] == 0 { continue; }
-                let best = aggregated[row_idx].iter().enumerate().max_by(|a,b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal)).map(|(idx, _)| idx).unwrap_or(0);
-                if best == y_idx[row_idx] { correct += 1; }
+                if votes[row_idx] == 0 {
+                    continue;
+                }
+                let best = aggregated[row_idx]
+                    .iter()
+                    .enumerate()
+                    .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(0);
+                if best == y_idx[row_idx] {
+                    correct += 1;
+                }
                 seen += 1;
             }
-            if seen > 0 { Some(correct as f32 / seen as f32) } else { None }
-        } else { None };
-        Ok(Self { trees, encoder, oob_score, feature_importances })
+            if seen > 0 {
+                Some(correct as f32 / seen as f32)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        Ok(Self {
+            trees,
+            encoder,
+            oob_score,
+            feature_importances,
+        })
     }
     fn balanced_bootstrap(y_idx: &[usize], rows: usize, rng: &mut StdRng) -> Vec<usize> {
         let mut grouped: HashMap<usize, Vec<usize>> = HashMap::new();
-        for (idx, cls) in y_idx.iter().enumerate() { grouped.entry(*cls).or_default().push(idx); }
+        for (idx, cls) in y_idx.iter().enumerate() {
+            grouped.entry(*cls).or_default().push(idx);
+        }
         let mut output = Vec::with_capacity(rows);
         let mut groups: Vec<Vec<usize>> = grouped.into_values().collect();
         groups.sort_by_key(|v| v.first().copied().unwrap_or(usize::MAX));
         while output.len() < rows {
             for group in &groups {
-                if group.is_empty() { continue; }
+                if group.is_empty() {
+                    continue;
+                }
                 let pick = group[rng.random_range(0..group.len())];
                 output.push(pick);
-                if output.len() >= rows { break; }
+                if output.len() >= rows {
+                    break;
+                }
             }
         }
         output
@@ -187,17 +338,28 @@ impl RandomForestModel {
     pub(crate) fn predict_scores(&self, probe: &DenseMatrix) -> Vec<(ClassificationLabel, f32)> {
         let row = probe.index_axis(Axis(0), 0).to_vec();
         let n_classes = self.encoder.labels.len();
-        let acc: Vec<f32> = self.trees
+        let acc: Vec<f32> = self
+            .trees
             .par_iter()
             .fold(
                 || vec![0.0f32; n_classes],
-                |mut a, tree| { tree.accumulate(&row, &mut a); a },
+                |mut a, tree| {
+                    tree.accumulate(&row, &mut a);
+                    a
+                },
             )
             .reduce(
                 || vec![0.0f32; n_classes],
-                |mut a, b| { a.iter_mut().zip(b.iter()).for_each(|(x, &y)| *x += y); a },
+                |mut a, b| {
+                    a.iter_mut().zip(b.iter()).for_each(|(x, &y)| *x += y);
+                    a
+                },
             );
-        let raw: Vec<(ClassificationLabel, f32)> = acc.into_iter().enumerate().map(|(idx, value)| (self.encoder.decode(idx), value.max(1e-6).ln())).collect();
+        let raw: Vec<(ClassificationLabel, f32)> = acc
+            .into_iter()
+            .enumerate()
+            .map(|(idx, value)| (self.encoder.decode(idx), value.max(1e-6).ln()))
+            .collect();
         softmax_scores(&raw)
     }
 }

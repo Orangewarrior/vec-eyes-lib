@@ -49,7 +49,13 @@ impl RegexMatcher {
     pub fn from_ruleset(rule_set: &RuleSet) -> Result<Self, VecEyesError> {
         let mut compiled = Vec::new();
         for rule in &rule_set.rules {
-            compiled.push((rule.clone(), RegexBuilder::new(&rule.match_rule).size_limit(10_000_000).dfa_size_limit(2_000_000).build()?));
+            compiled.push((
+                rule.clone(),
+                RegexBuilder::new(&rule.match_rule)
+                    .size_limit(10_000_000)
+                    .dfa_size_limit(2_000_000)
+                    .build()?,
+            ));
         }
         Ok(Self { compiled })
     }
@@ -111,7 +117,13 @@ impl MatcherFactory {
     pub fn build_from_extra_match(
         extra: &ExtraMatchConfig,
     ) -> Result<Box<dyn RuleMatcher>, VecEyesError> {
-        let rules = RuleSet::from_rule_path(&extra.path, extra.recursive_way.is_on(), extra.score_add_points, extra.title.clone(), extra.description.clone())?;
+        let rules = RuleSet::from_rule_path(
+            &extra.path,
+            extra.recursive_way.is_on(),
+            extra.score_add_points,
+            extra.title.clone(),
+            extra.description.clone(),
+        )?;
         match extra.engine {
             ExtraMatchEngine::Regex => Self::build(MatcherBackend::Regex, &rules),
             ExtraMatchEngine::Vectorscan => {
@@ -133,7 +145,10 @@ impl RuleSet {
         let content = read_text_file(path)?;
         let value: serde_json::Value = serde_json::from_str(&content)?;
         if !value.is_array() {
-            return Err(VecEyesError::invalid_config("matcher::RuleSet::from_json_file", format!("expected JSON array of rules in {}", path.display())));
+            return Err(VecEyesError::invalid_config(
+                "matcher::RuleSet::from_json_file",
+                format!("expected JSON array of rules in {}", path.display()),
+            ));
         }
         let rules: Vec<MatchRule> = serde_json::from_value(value)?;
         Ok(Self { rules })
@@ -143,7 +158,10 @@ impl RuleSet {
         let content = read_text_file(path)?;
         let value: serde_yaml::Value = serde_yaml::from_str(&content)?;
         if !matches!(value, serde_yaml::Value::Sequence(_)) {
-            return Err(VecEyesError::invalid_config("matcher::RuleSet::from_yaml_file", format!("expected YAML sequence of rules in {}", path.display())));
+            return Err(VecEyesError::invalid_config(
+                "matcher::RuleSet::from_yaml_file",
+                format!("expected YAML sequence of rules in {}", path.display()),
+            ));
         }
         let rules: Vec<MatchRule> = serde_yaml::from_value(value)?;
         Ok(Self { rules })
@@ -158,17 +176,31 @@ impl RuleSet {
     ) -> Result<Self, VecEyesError> {
         let mut rules = Vec::new();
         if path.is_file() {
-            rules.extend(load_rules_from_single_file(path, score, title.clone(), description.clone())?);
+            rules.extend(load_rules_from_single_file(
+                path,
+                score,
+                title.clone(),
+                description.clone(),
+            )?);
         } else {
             let files = collect_files_recursively(path, recursive)?;
             for file in files {
-                rules.extend(load_rules_from_single_file(&file, score, title.clone(), description.clone())?);
+                rules.extend(load_rules_from_single_file(
+                    &file,
+                    score,
+                    title.clone(),
+                    description.clone(),
+                )?);
             }
         }
         if rules.len() > MAX_RULES_PER_RULESET {
             return Err(VecEyesError::invalid_config(
                 "matcher::RuleSet::from_rule_path",
-                format!("compiled {} rules which exceeds MAX_RULES_PER_RULESET={}", rules.len(), MAX_RULES_PER_RULESET),
+                format!(
+                    "compiled {} rules which exceeds MAX_RULES_PER_RULESET={}",
+                    rules.len(),
+                    MAX_RULES_PER_RULESET
+                ),
             ));
         }
         Ok(Self { rules })
@@ -181,7 +213,11 @@ fn load_rules_from_single_file(
     title: Option<String>,
     description: Option<String>,
 ) -> Result<Vec<MatchRule>, VecEyesError> {
-    let extension = path.extension().and_then(|x| x.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let extension = path
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     if extension == "json" {
         return Ok(RuleSet::from_json_file(path)?.rules);
     }
@@ -208,7 +244,11 @@ fn load_rules_from_single_file(
         if trimmed.len() > MAX_TEXT_RULE_LINE_LEN {
             return Err(VecEyesError::invalid_config(
                 "matcher::load_rules_from_single_file",
-                format!("rule line in {} exceeds {} bytes", path.display(), MAX_TEXT_RULE_LINE_LEN),
+                format!(
+                    "rule line in {} exceeds {} bytes",
+                    path.display(),
+                    MAX_TEXT_RULE_LINE_LEN
+                ),
             ));
         }
 
@@ -226,7 +266,10 @@ fn load_rules_from_single_file(
 pub struct ScoringEngine;
 
 impl ScoringEngine {
-    pub fn compute_rule_boost(text: &str, matchers: &[Box<dyn RuleMatcher>]) -> (f32, Vec<AlertHit>) {
+    pub fn compute_rule_boost(
+        text: &str,
+        matchers: &[Box<dyn RuleMatcher>],
+    ) -> (f32, Vec<AlertHit>) {
         let mut total = 0.0f32;
         let mut hits = Vec::new();
         for matcher in matchers {

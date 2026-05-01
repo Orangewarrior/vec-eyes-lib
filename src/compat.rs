@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 
 use crate::builders::Builder;
 use crate::classifier::Classifier;
@@ -10,7 +11,10 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 
-#[deprecated(since = "2.8.0", note = "use `NlpOption` from the `nlp` module instead")]
+#[deprecated(
+    since = "2.8.0",
+    note = "use `NlpOption` from the `nlp` module instead"
+)]
 #[derive(Debug, Clone, Copy)]
 pub enum RepresentationKind {
     Count,
@@ -19,14 +23,20 @@ pub enum RepresentationKind {
     FastText,
 }
 
-#[deprecated(since = "2.8.0", note = "configure NLP directly via `ClassifierFactory::builder().nlp(NlpOption::...)`")]
+#[deprecated(
+    since = "2.8.0",
+    note = "configure NLP directly via `ClassifierFactory::builder().nlp(NlpOption::...)`"
+)]
 #[derive(Debug, Clone)]
 pub struct NlpPipeline {
     pub representation: RepresentationKind,
     pub fasttext_config: Option<FastTextConfig>,
 }
 
-#[deprecated(since = "2.8.0", note = "use `ClassifierFactory::builder().nlp(...)` instead")]
+#[deprecated(
+    since = "2.8.0",
+    note = "use `ClassifierFactory::builder().nlp(...)` instead"
+)]
 pub struct NlpPipelineBuilder {
     representation: Option<RepresentationKind>,
     fasttext_config: Option<FastTextConfig>,
@@ -51,8 +61,12 @@ impl Builder<NlpPipeline> for NlpPipelineBuilder {
 
 #[allow(deprecated)]
 impl NlpPipelineBuilder {
-    pub fn new() -> Self { <Self as Builder<NlpPipeline>>::new() }
-    pub fn build(self) -> Result<NlpPipeline, VecEyesError> { <Self as Builder<NlpPipeline>>::build(self) }
+    pub fn new() -> Self {
+        <Self as Builder<NlpPipeline>>::new()
+    }
+    pub fn build(self) -> Result<NlpPipeline, VecEyesError> {
+        <Self as Builder<NlpPipeline>>::build(self)
+    }
 
     pub fn representation(mut self, representation: RepresentationKind) -> Self {
         self.representation = Some(representation);
@@ -65,7 +79,16 @@ impl NlpPipelineBuilder {
     }
 }
 
-#[deprecated(since = "2.8.0", note = "output handling is no longer needed; remove this from your code")]
+impl Default for NlpPipelineBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[deprecated(
+    since = "2.8.0",
+    note = "output handling is no longer needed; remove this from your code"
+)]
 #[derive(Debug, Clone, Default)]
 pub struct OutputWriters {
     disabled: bool,
@@ -95,7 +118,10 @@ pub mod alerts {
         target_labels: Vec<ClassificationLabel>,
     }
 
-    #[deprecated(since = "2.8.0", note = "use `MatcherFactory::build_from_extra_match` with `ExtraMatchConfig` instead")]
+    #[deprecated(
+        since = "2.8.0",
+        note = "use `MatcherFactory::build_from_extra_match` with `ExtraMatchConfig` instead"
+    )]
     #[derive(Debug, Clone)]
     pub struct AlertMatcher {
         compiled: Vec<CompiledAlertRule>,
@@ -168,7 +194,10 @@ pub struct EngineReport {
     pub classifications: Vec<(ClassificationLabel, f32)>,
 }
 
-#[deprecated(since = "2.8.0", note = "use `ClassifierFactory::builder()` with `ScoringEngine::matchers_from_rules_file` instead")]
+#[deprecated(
+    since = "2.8.0",
+    note = "use `ClassifierFactory::builder()` with `ScoringEngine::matchers_from_rules_file` instead"
+)]
 pub struct EngineBuilder {
     model: Option<Box<dyn Classifier>>,
     alerts: Option<alerts::AlertMatcher>,
@@ -187,7 +216,9 @@ impl Builder<Engine> for EngineBuilder {
 
     fn build(self) -> Result<Engine, VecEyesError> {
         Ok(Engine {
-            model: self.model.ok_or_else(|| VecEyesError::invalid_config("compat::EngineBuilder::build", "model is required"))?,
+            model: self.model.ok_or_else(|| {
+                VecEyesError::invalid_config("compat::EngineBuilder::build", "model is required")
+            })?,
             alerts: self.alerts,
             output: self.output.unwrap_or_default(),
         })
@@ -196,8 +227,12 @@ impl Builder<Engine> for EngineBuilder {
 
 #[allow(deprecated)]
 impl EngineBuilder {
-    pub fn new() -> Self { <Self as Builder<Engine>>::new() }
-    pub fn build(self) -> Result<Engine, VecEyesError> { <Self as Builder<Engine>>::build(self) }
+    pub fn new() -> Self {
+        <Self as Builder<Engine>>::new()
+    }
+    pub fn build(self) -> Result<Engine, VecEyesError> {
+        <Self as Builder<Engine>>::build(self)
+    }
 
     pub fn model(mut self, model: Box<dyn Classifier>) -> Self {
         self.model = Some(model);
@@ -215,7 +250,16 @@ impl EngineBuilder {
     }
 }
 
-#[deprecated(since = "2.8.0", note = "use the `Classifier` trait directly via `ClassifierFactory::builder()`")]
+impl Default for EngineBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[deprecated(
+    since = "2.8.0",
+    note = "use the `Classifier` trait directly via `ClassifierFactory::builder()`"
+)]
 pub struct Engine {
     model: Box<dyn Classifier>,
     alerts: Option<alerts::AlertMatcher>,
@@ -225,7 +269,10 @@ pub struct Engine {
 #[allow(deprecated)]
 impl Engine {
     pub fn classify_text(&self, text: &str, _source: &str) -> Result<EngineReport, VecEyesError> {
-        let mut labels = self.model.classify_text(text, ScoreSumMode::Off, &[]).labels;
+        let mut labels = self
+            .model
+            .classify_text(text, ScoreSumMode::Off, &[])
+            .labels;
         if let Some(alerts) = &self.alerts {
             for (label, score) in alerts.classify_labels(text) {
                 if let Some(existing) = labels.iter_mut().find(|(existing, _)| *existing == label) {
@@ -239,6 +286,8 @@ impl Engine {
         if self.output.is_disabled() {
             // intentionally noop for compat mode
         }
-        Ok(EngineReport { classifications: labels })
+        Ok(EngineReport {
+            classifications: labels,
+        })
     }
 }

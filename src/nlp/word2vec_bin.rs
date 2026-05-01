@@ -17,6 +17,12 @@ use std::path::Path;
 use crate::error::VecEyesError;
 use crate::nlp::{DenseMatrix, TfIdfModel};
 
+const MAX_WORD2VEC_DIMS: usize = 4096;
+const MAX_WORD2VEC_VOCAB: usize = 5_000_000;
+const MAX_WORD2VEC_MATRIX_BYTES: usize = 2 * 1024 * 1024 * 1024;
+const MAX_WORD2VEC_HEADER_BYTES: usize = 1024;
+const MAX_WORD2VEC_TOKEN_BYTES: usize = 4096;
+
 // ── Low-level binary helpers ──────────────────────────────────────────────────
 
 fn read_header(r: &mut impl Read) -> Result<(usize, usize), VecEyesError> {
@@ -26,6 +32,12 @@ fn read_header(r: &mut impl Read) -> Result<(usize, usize), VecEyesError> {
         r.read_exact(&mut b)?;
         if b[0] == b'\n' {
             break;
+        }
+        if bytes.len() >= MAX_WORD2VEC_HEADER_BYTES {
+            return Err(VecEyesError::invalid_config(
+                "Word2VecBin::header",
+                format!("header exceeds {MAX_WORD2VEC_HEADER_BYTES} bytes"),
+            ));
         }
         bytes.push(b[0]);
     }
@@ -40,6 +52,7 @@ fn read_header(r: &mut impl Read) -> Result<(usize, usize), VecEyesError> {
         .next()
         .and_then(|v| v.parse().ok())
         .ok_or_else(|| VecEyesError::invalid_config("Word2VecBin::header", "missing dims"))?;
+    validate_word2vec_shape(vocab, dims)?;
     Ok((vocab, dims))
 }
 
@@ -62,10 +75,52 @@ fn read_word(r: &mut impl Read) -> Result<String, VecEyesError> {
         if b[0] == b' ' || b[0] == b'\t' {
             break;
         }
+        if bytes.len() >= MAX_WORD2VEC_TOKEN_BYTES {
+            return Err(VecEyesError::invalid_config(
+                "Word2VecBin::word",
+                format!("token exceeds {MAX_WORD2VEC_TOKEN_BYTES} bytes"),
+            ));
+        }
         bytes.push(b[0]);
     }
     String::from_utf8(bytes)
         .map_err(|e| VecEyesError::invalid_config("Word2VecBin::word", e.to_string()))
+}
+
+fn validate_word2vec_shape(vocab_size: usize, dims: usize) -> Result<(), VecEyesError> {
+    if vocab_size == 0 || vocab_size > MAX_WORD2VEC_VOCAB {
+        return Err(VecEyesError::invalid_config(
+            "Word2VecBin::header",
+            format!("vocab_size must be in 1..={MAX_WORD2VEC_VOCAB}, got {vocab_size}"),
+        ));
+    }
+    if dims == 0 || dims > MAX_WORD2VEC_DIMS {
+        return Err(VecEyesError::invalid_config(
+            "Word2VecBin::header",
+            format!("dims must be in 1..={MAX_WORD2VEC_DIMS}, got {dims}"),
+        ));
+    }
+    let floats = vocab_size.checked_mul(dims).ok_or_else(|| {
+        VecEyesError::invalid_config(
+            "Word2VecBin::header",
+            format!("matrix shape {vocab_size}x{dims} overflows usize"),
+        )
+    })?;
+    let bytes = floats
+        .checked_mul(std::mem::size_of::<f32>())
+        .ok_or_else(|| {
+            VecEyesError::invalid_config(
+                "Word2VecBin::header",
+                format!("matrix shape {vocab_size}x{dims} overflows byte length"),
+            )
+        })?;
+    if bytes > MAX_WORD2VEC_MATRIX_BYTES {
+        return Err(VecEyesError::invalid_config(
+            "Word2VecBin::header",
+            format!("matrix requires {bytes} bytes, limit is {MAX_WORD2VEC_MATRIX_BYTES}"),
+        ));
+    }
+    Ok(())
 }
 
 fn read_floats(r: &mut impl Read, buf: &mut [f32]) -> Result<(), VecEyesError> {
@@ -76,7 +131,10 @@ fn read_floats(r: &mut impl Read, buf: &mut [f32]) -> Result<(), VecEyesError> {
     while offset < buf.len() {
         let n = (buf.len() - offset).min(CHUNK);
         r.read_exact(&mut tmp[..n * 4])?;
-        for (dst, src) in buf[offset..offset + n].iter_mut().zip(tmp[..n * 4].chunks_exact(4)) {
+        for (dst, src) in buf[offset..offset + n]
+            .iter_mut()
+            .zip(tmp[..n * 4].chunks_exact(4))
+        {
             *dst = f32::from_le_bytes(src.try_into().unwrap());
         }
         offset += n;
@@ -110,7 +168,13 @@ impl Word2VecBin {
         let (vocab_size, dims) = read_header(&mut reader)?;
 
         let mut word_index = HashMap::with_capacity(vocab_size);
-        let mut matrix = vec![0f32; vocab_size * dims];
+        let matrix_len = vocab_size.checked_mul(dims).ok_or_else(|| {
+            VecEyesError::invalid_config(
+                "Word2VecBin::load",
+                format!("matrix shape {vocab_size}x{dims} overflows usize"),
+            )
+        })?;
+        let mut matrix = vec![0f32; matrix_len];
 
         for i in 0..vocab_size {
             let word = read_word(&mut reader)?;
@@ -128,7 +192,11 @@ impl Word2VecBin {
             }
         }
 
-        Ok(Self { dims, word_index, matrix })
+        Ok(Self {
+            dims,
+            word_index,
+            matrix,
+        })
     }
 
     /// Extract every word vector from the model.
@@ -143,7 +211,11 @@ impl Word2VecBin {
             word_vectors.insert(word.clone(), self.matrix[start..start + self.dims].to_vec());
         }
         let centroid = compute_centroid(&word_vectors, self.dims);
-        Word2VecEmbeddings { dims: self.dims, word_vectors, centroid }
+        Word2VecEmbeddings {
+            dims: self.dims,
+            word_vectors,
+            centroid,
+        }
     }
 
     /// Extract only the vectors needed for the given vocabulary.
@@ -166,7 +238,11 @@ impl Word2VecBin {
             }
         }
         let centroid = compute_centroid(&word_vectors, self.dims);
-        Word2VecEmbeddings { dims: self.dims, word_vectors, centroid }
+        Word2VecEmbeddings {
+            dims: self.dims,
+            word_vectors,
+            centroid,
+        }
     }
 }
 
@@ -231,17 +307,47 @@ impl Word2VecEmbeddings {
 
     /// Persist to a bincode file for fast subsequent reloads.
     pub fn save_bincode<P: AsRef<Path>>(&self, path: P) -> Result<(), VecEyesError> {
-        let bytes = bincode::serialize(self)
-            .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        let bytes =
+            bincode::serialize(self).map_err(|e| VecEyesError::Serialization(e.to_string()))?;
         std::fs::write(path, bytes)?;
         Ok(())
     }
 
     /// Reload from a bincode file produced by [`save_bincode`](Word2VecEmbeddings::save_bincode).
     pub fn load_bincode<P: AsRef<Path>>(path: P) -> Result<Self, VecEyesError> {
-        let bytes = std::fs::read(path)?;
-        bincode::deserialize(&bytes)
-            .map_err(|e| VecEyesError::Serialization(e.to_string()))
+        let bytes = crate::security::read_file_limited(
+            path.as_ref(),
+            crate::security::DEFAULT_MAX_MODEL_BYTES,
+            "Word2VecEmbeddings::load_bincode",
+        )?;
+        let model: Self =
+            bincode::deserialize(&bytes).map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        model.validate_loaded("Word2VecEmbeddings::load_bincode")?;
+        Ok(model)
+    }
+
+    fn validate_loaded(&self, context: &str) -> Result<(), VecEyesError> {
+        if self.dims == 0 || self.dims > MAX_WORD2VEC_DIMS {
+            return Err(VecEyesError::invalid_config(
+                context,
+                format!("dims must be in 1..={MAX_WORD2VEC_DIMS}, got {}", self.dims),
+            ));
+        }
+        if self.centroid.len() != self.dims {
+            return Err(VecEyesError::invalid_config(
+                context,
+                "centroid length must match dims",
+            ));
+        }
+        for vector in self.word_vectors.values() {
+            if vector.len() != self.dims {
+                return Err(VecEyesError::invalid_config(
+                    context,
+                    "all word vectors must match dims",
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -288,7 +394,9 @@ pub fn embed_texts<S: AsRef<str>>(
             }
             if total_weight > 0.0 {
                 let inv = 1.0 / total_weight;
-                row.iter_mut().zip(acc.iter()).for_each(|(dst, &src)| *dst = src * inv);
+                row.iter_mut()
+                    .zip(acc.iter())
+                    .for_each(|(dst, &src)| *dst = src * inv);
             }
         });
 

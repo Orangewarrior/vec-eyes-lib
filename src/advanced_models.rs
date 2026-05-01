@@ -1,5 +1,4 @@
 use crate::classifier::{ClassificationResult, Classifier};
-use ndarray;
 use crate::config::ScoreSumMode;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
@@ -9,6 +8,7 @@ use crate::nlp::{
     dense_matrix_from_texts_with_tfidf, fit_tfidf, normalize_text, tokenize, DenseMatrix,
     FastTextConfigBuilder, FastTextEmbeddings, NlpOption, TfIdfModel, WordEmbeddingModel,
 };
+use ndarray;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -39,13 +39,23 @@ pub struct LogisticRegressionConfig {
 
 impl Default for LogisticRegressionConfig {
     fn default() -> Self {
-        Self { learning_rate: 0.25, epochs: 180, lambda: 1e-3 }
+        Self {
+            learning_rate: 0.25,
+            epochs: 180,
+            lambda: 1e-3,
+        }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum RandomForestMode {
-    #[serde(alias = "standard", alias = "Standard", alias = "standart", alias = "Standart")]
+    #[serde(
+        alias = "standard",
+        alias = "Standard",
+        alias = "standart",
+        alias = "Standart"
+    )]
+    #[default]
     Standard,
     #[serde(alias = "balanced", alias = "Balanced")]
     Balanced,
@@ -53,13 +63,10 @@ pub enum RandomForestMode {
     ExtraTrees,
 }
 
-impl Default for RandomForestMode {
-    fn default() -> Self { Self::Standard }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum RandomForestMaxFeatures {
     #[serde(alias = "sqrt", alias = "Sqrt")]
+    #[default]
     Sqrt,
     #[serde(alias = "log2", alias = "Log2")]
     Log2,
@@ -67,10 +74,6 @@ pub enum RandomForestMaxFeatures {
     All,
     #[serde(alias = "half", alias = "Half")]
     Half,
-}
-
-impl Default for RandomForestMaxFeatures {
-    fn default() -> Self { Self::Sqrt }
 }
 
 impl RandomForestMaxFeatures {
@@ -149,7 +152,11 @@ pub struct GradientBoostingConfig {
 
 impl Default for GradientBoostingConfig {
     fn default() -> Self {
-        Self { n_estimators: 24, learning_rate: 0.2, max_depth: 1 }
+        Self {
+            n_estimators: 24,
+            learning_rate: 0.2,
+            max_depth: 1,
+        }
     }
 }
 
@@ -162,7 +169,11 @@ pub struct IsolationForestConfig {
 
 impl Default for IsolationForestConfig {
     fn default() -> Self {
-        Self { n_trees: 64, contamination: 0.05, subsample_size: 64 }
+        Self {
+            n_trees: 64,
+            contamination: 0.05,
+            subsample_size: 64,
+        }
     }
 }
 
@@ -196,15 +207,31 @@ pub enum AdvancedMethod {
 enum FeaturePipeline {
     Count(TfIdfModel),
     TfIdf(TfIdfModel),
-    Word2Vec { model: WordEmbeddingModel, idf: TfIdfModel },
-    FastText { model: WordEmbeddingModel, idf: TfIdfModel },
-    ExternalFastText { embeddings: FastTextEmbeddings, idf: TfIdfModel },
+    Word2Vec {
+        model: WordEmbeddingModel,
+        idf: TfIdfModel,
+    },
+    FastText {
+        model: WordEmbeddingModel,
+        idf: TfIdfModel,
+    },
+    ExternalFastText {
+        embeddings: FastTextEmbeddings,
+        idf: TfIdfModel,
+    },
     /// Unified external embeddings — fastText or word2vec, selected at build time.
-    ExternalEmbeddings { embeddings: crate::nlp::ExternalEmbeddings, idf: TfIdfModel },
+    ExternalEmbeddings {
+        embeddings: crate::nlp::ExternalEmbeddings,
+        idf: TfIdfModel,
+    },
 }
 
 impl FeaturePipeline {
-    fn fit(samples: &[TrainingSample], nlp: NlpOption, dims: usize) -> Result<(Self, DenseMatrix), VecEyesError> {
+    fn fit(
+        samples: &[TrainingSample],
+        nlp: NlpOption,
+        dims: usize,
+    ) -> Result<(Self, DenseMatrix), VecEyesError> {
         let texts: Vec<&str> = samples.iter().map(|s| s.text.as_str()).collect();
         match nlp {
             NlpOption::Count => {
@@ -224,7 +251,9 @@ impl FeaturePipeline {
                 Ok((Self::Word2Vec { model, idf }, matrix))
             }
             NlpOption::FastText => {
-                let cfg = FastTextConfigBuilder::new().build().expect("default FastTextConfigBuilder must be valid");
+                let cfg = FastTextConfigBuilder::new()
+                    .build()
+                    .expect("default FastTextConfigBuilder must be valid");
                 let idf = fit_tfidf(&texts);
                 let model = WordEmbeddingModel::train_fasttext(&texts, dims, cfg);
                 let matrix = dense_matrix_from_texts_with_tfidf(&model, &texts, Some(&idf));
@@ -240,17 +269,30 @@ impl FeaturePipeline {
 
     fn transform_batch<S: AsRef<str>>(&self, texts: &[S]) -> DenseMatrix {
         match self {
-            Self::Count(model)  => transform_count(model, texts),
-            Self::TfIdf(model)  => crate::nlp::transform_tfidf(model, texts),
+            Self::Count(model) => transform_count(model, texts),
+            Self::TfIdf(model) => crate::nlp::transform_tfidf(model, texts),
             // Use the stored training IDF — never refit on the probe document.
-            Self::Word2Vec { model, idf } => dense_matrix_from_texts_with_tfidf(model, texts, Some(idf)),
-            Self::FastText { model, idf } => dense_matrix_from_texts_with_tfidf(model, texts, Some(idf)),
+            Self::Word2Vec { model, idf } => {
+                dense_matrix_from_texts_with_tfidf(model, texts, Some(idf))
+            }
+            Self::FastText { model, idf } => {
+                dense_matrix_from_texts_with_tfidf(model, texts, Some(idf))
+            }
             Self::ExternalFastText { embeddings, idf } => {
                 crate::nlp::fasttext_bin::embed_texts(embeddings, texts, Some(idf))
             }
             Self::ExternalEmbeddings { embeddings, idf } => {
                 crate::nlp::external_embeddings::embed_external(embeddings, texts, Some(idf))
             }
+        }
+    }
+
+    fn output_dims(&self) -> usize {
+        match self {
+            Self::Count(model) | Self::TfIdf(model) => model.vocab.len(),
+            Self::Word2Vec { model, .. } | Self::FastText { model, .. } => model.dims,
+            Self::ExternalFastText { embeddings, .. } => embeddings.dims,
+            Self::ExternalEmbeddings { embeddings, .. } => embeddings.dims(),
         }
     }
 }
@@ -289,7 +331,8 @@ pub(crate) struct LabelEncoder {
 
 impl LabelEncoder {
     pub(crate) fn fit(samples: &[TrainingSample]) -> Self {
-        let mut labels: Vec<ClassificationLabel> = samples.iter().map(|s| s.label.clone()).collect();
+        let mut labels: Vec<ClassificationLabel> =
+            samples.iter().map(|s| s.label.clone()).collect();
         labels.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         // sort must precede dedup — dedup only removes consecutive duplicates
         labels.dedup();
@@ -299,7 +342,6 @@ impl LabelEncoder {
         }
         Self { labels, to_idx }
     }
-
 
     pub(crate) fn encode(&self, label: &ClassificationLabel) -> Result<usize, VecEyesError> {
         self.to_idx.get(label).copied().ok_or_else(|| {
@@ -311,7 +353,10 @@ impl LabelEncoder {
     }
 
     pub(crate) fn decode(&self, idx: usize) -> ClassificationLabel {
-        self.labels.get(idx).cloned().unwrap_or(ClassificationLabel::RawData)
+        self.labels
+            .get(idx)
+            .cloned()
+            .unwrap_or(ClassificationLabel::RawData)
     }
 }
 
@@ -337,7 +382,9 @@ struct VersionedJsonOwned {
     #[serde(flatten)]
     classifier: AdvancedClassifier,
 }
-fn default_json_version() -> u32 { 0 }
+fn default_json_version() -> u32 {
+    0
+}
 
 /// Bincode save wrapper.  Placed as the first field so the version u32 is
 /// always at byte offset 0, making format detection unambiguous.
@@ -414,7 +461,10 @@ impl AdvancedClassifier {
     ///
     /// The file includes a `"version"` field for forward-compatibility detection.
     pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
-        let versioned = VersionedJsonRef { version: CLASSIFIER_FORMAT_VERSION, classifier: self };
+        let versioned = VersionedJsonRef {
+            version: CLASSIFIER_FORMAT_VERSION,
+            classifier: self,
+        };
         let json = serde_json::to_string(&versioned)
             .map_err(|e| VecEyesError::invalid_config("AdvancedClassifier::save", e.to_string()))?;
         std::fs::write(path, json)?;
@@ -426,11 +476,18 @@ impl AdvancedClassifier {
     /// Accepts both the current versioned format and the legacy format (no
     /// `"version"` field) produced by vec-eyes-lib < 3.2.
     pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
-        let json = std::fs::read_to_string(path)?;
+        let json = crate::security::read_to_string_limited(
+            path.as_ref(),
+            crate::security::DEFAULT_MAX_MODEL_BYTES,
+            "AdvancedClassifier::load",
+        )?;
         let versioned: VersionedJsonOwned = serde_json::from_str(&json)
             .map_err(|e| VecEyesError::invalid_config("AdvancedClassifier::load", e.to_string()))?;
         match versioned.version {
-            0 | CLASSIFIER_FORMAT_VERSION => Ok(versioned.classifier),
+            0 | CLASSIFIER_FORMAT_VERSION => {
+                versioned.classifier.validate_loaded("AdvancedClassifier::load")?;
+                Ok(versioned.classifier)
+            }
             v => Err(VecEyesError::invalid_config(
                 "AdvancedClassifier::load",
                 format!("unsupported model version {v}; this binary supports version {CLASSIFIER_FORMAT_VERSION}"),
@@ -494,14 +551,26 @@ impl AdvancedClassifier {
                     params.contamination
                 };
                 let model = IsolationForestModel::fit(
-                    matrix, hot_label, cold_label, params.n_trees,
-                    contamination, params.subsample_size, config.threads,
+                    matrix,
+                    hot_label,
+                    cold_label,
+                    params.n_trees,
+                    contamination,
+                    params.subsample_size,
+                    config.threads,
                 );
                 Ok(AdvancedInner::IsolationForest(model))
             }
             AdvancedMethod::LogisticRegression => {
                 let params = config.logistic.clone().unwrap_or_default();
-                let model = LogisticOVR::fit(matrix, samples, params.epochs, params.learning_rate, params.lambda, config.threads)?;
+                let model = LogisticOVR::fit(
+                    matrix,
+                    samples,
+                    params.epochs,
+                    params.learning_rate,
+                    params.lambda,
+                    config.threads,
+                )?;
                 Ok(AdvancedInner::Logistic(model))
             }
             AdvancedMethod::Svm => {
@@ -516,7 +585,14 @@ impl AdvancedClassifier {
             }
             AdvancedMethod::GradientBoosting => {
                 let params = config.gradient_boosting.clone().unwrap_or_default();
-                let model = GradientBoostingModel::fit(matrix, samples, params.n_estimators, params.learning_rate, config.threads)?;
+                let model = GradientBoostingModel::fit(
+                    matrix,
+                    samples,
+                    params.n_estimators,
+                    params.learning_rate,
+                    params.max_depth,
+                    config.threads,
+                )?;
                 Ok(AdvancedInner::GradientBoosting(model))
             }
         }
@@ -529,7 +605,10 @@ impl AdvancedClassifier {
     /// Use [`save`](AdvancedClassifier::save) / [`load`](AdvancedClassifier::load)
     /// (JSON) if backwards compatibility is required.
     pub fn save_bincode<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), VecEyesError> {
-        let versioned = VersionedBincode { version: CLASSIFIER_FORMAT_VERSION, classifier: self.clone() };
+        let versioned = VersionedBincode {
+            version: CLASSIFIER_FORMAT_VERSION,
+            classifier: self.clone(),
+        };
         let bytes = bincode::serialize(&versioned)
             .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
         std::fs::write(path, bytes)?;
@@ -538,7 +617,11 @@ impl AdvancedClassifier {
 
     /// Load a model from a bincode file produced by [`save_bincode`](AdvancedClassifier::save_bincode).
     pub fn load_bincode<P: AsRef<std::path::Path>>(path: P) -> Result<Self, VecEyesError> {
-        let bytes = std::fs::read(path)?;
+        let bytes = crate::security::read_file_limited(
+            path.as_ref(),
+            crate::security::DEFAULT_MAX_MODEL_BYTES,
+            "AdvancedClassifier::load_bincode",
+        )?;
         let versioned: VersionedBincode = bincode::deserialize(&bytes).map_err(|e| {
             VecEyesError::Serialization(format!(
                 "model deserialization failed — file may be a legacy format (pre-3.2) \
@@ -546,7 +629,10 @@ impl AdvancedClassifier {
             ))
         })?;
         match versioned.version {
-            CLASSIFIER_FORMAT_VERSION => Ok(versioned.classifier),
+            CLASSIFIER_FORMAT_VERSION => {
+                versioned.classifier.validate_loaded("AdvancedClassifier::load_bincode")?;
+                Ok(versioned.classifier)
+            }
             v => Err(VecEyesError::invalid_config(
                 "AdvancedClassifier::load_bincode",
                 format!("unsupported model version {v}; this binary supports version {CLASSIFIER_FORMAT_VERSION}"),
@@ -574,11 +660,40 @@ impl AdvancedClassifier {
         nlp_path: P,
         ml_path: Q,
     ) -> Result<Self, VecEyesError> {
-        let pipeline: FeaturePipeline = bincode::deserialize(&std::fs::read(nlp_path)?)
+        let nlp_bytes = crate::security::read_file_limited(
+            nlp_path.as_ref(),
+            crate::security::DEFAULT_MAX_MODEL_BYTES,
+            "AdvancedClassifier::load_split_bincode(nlp)",
+        )?;
+        let ml_bytes = crate::security::read_file_limited(
+            ml_path.as_ref(),
+            crate::security::DEFAULT_MAX_MODEL_BYTES,
+            "AdvancedClassifier::load_split_bincode(ml)",
+        )?;
+        let pipeline: FeaturePipeline = bincode::deserialize(&nlp_bytes)
             .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
-        let inner: AdvancedInner = bincode::deserialize(&std::fs::read(ml_path)?)
+        let inner: AdvancedInner = bincode::deserialize(&ml_bytes)
             .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
-        Ok(Self { pipeline, inner })
+        let classifier = Self { pipeline, inner };
+        classifier.validate_loaded("AdvancedClassifier::load_split_bincode")?;
+        Ok(classifier)
+    }
+
+    fn validate_loaded(&self, context: &str) -> Result<(), VecEyesError> {
+        let dims = self.pipeline.output_dims();
+        if dims == 0 {
+            return Err(VecEyesError::invalid_config(
+                context,
+                "feature pipeline must produce at least one column",
+            ));
+        }
+        if dims > 1_000_000 {
+            return Err(VecEyesError::invalid_config(
+                context,
+                format!("feature pipeline has {dims} columns, limit is 1000000"),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -600,7 +715,10 @@ impl Classifier for AdvancedClassifier {
             matchers.iter().flat_map(|m| m.find_matches(text)).collect()
         };
         labels.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        ClassificationResult { labels, extra_hits: hits }
+        ClassificationResult {
+            labels,
+            extra_hits: hits,
+        }
     }
 
     fn classify_batch(
@@ -610,25 +728,34 @@ impl Classifier for AdvancedClassifier {
         matchers: &[Box<dyn RuleMatcher>],
     ) -> Vec<ClassificationResult> {
         use rayon::prelude::*;
-        if texts.is_empty() { return Vec::new(); }
+        if texts.is_empty() {
+            return Vec::new();
+        }
         // Transform entire batch to matrix in one NLP pipeline call — the main
         // speedup: token lookup + IDF weighting happens once for all N texts.
         let batch_matrix = self.pipeline.transform_batch(texts);
-        texts.par_iter().enumerate().map(|(i, &text)| {
-            let single = batch_matrix.slice(ndarray::s![i..i+1, ..]).to_owned();
-            let mut labels = self.score_probe(&single);
-            let hits = if score_sum_mode.is_on() {
-                let (boost, hits) = ScoringEngine::compute_rule_boost(text, matchers);
-                for (_, score) in &mut labels {
-                    *score = ScoringEngine::merge_scores(*score, boost, score_sum_mode);
+        texts
+            .par_iter()
+            .enumerate()
+            .map(|(i, &text)| {
+                let single = batch_matrix.slice(ndarray::s![i..i + 1, ..]).to_owned();
+                let mut labels = self.score_probe(&single);
+                let hits = if score_sum_mode.is_on() {
+                    let (boost, hits) = ScoringEngine::compute_rule_boost(text, matchers);
+                    for (_, score) in &mut labels {
+                        *score = ScoringEngine::merge_scores(*score, boost, score_sum_mode);
+                    }
+                    hits
+                } else {
+                    matchers.iter().flat_map(|m| m.find_matches(text)).collect()
+                };
+                labels.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                ClassificationResult {
+                    labels,
+                    extra_hits: hits,
                 }
-                hits
-            } else {
-                matchers.iter().flat_map(|m| m.find_matches(text)).collect()
-            };
-            labels.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            ClassificationResult { labels, extra_hits: hits }
-        }).collect()
+            })
+            .collect()
     }
 }
 
@@ -748,10 +875,7 @@ macro_rules! impl_advanced_classifier {
             }
 
             /// Save NLP pipeline and ML weights to separate bincode files.
-            pub fn save_split_bincode<
-                P: AsRef<std::path::Path>,
-                Q: AsRef<std::path::Path>,
-            >(
+            pub fn save_split_bincode<P: AsRef<std::path::Path>, Q: AsRef<std::path::Path>>(
                 &self,
                 nlp_path: P,
                 ml_path: Q,
@@ -760,10 +884,7 @@ macro_rules! impl_advanced_classifier {
             }
 
             /// Load from two bincode files written by `save_split_bincode`.
-            pub fn load_split_bincode<
-                P: AsRef<std::path::Path>,
-                Q: AsRef<std::path::Path>,
-            >(
+            pub fn load_split_bincode<P: AsRef<std::path::Path>, Q: AsRef<std::path::Path>>(
                 nlp_path: P,
                 ml_path: Q,
             ) -> Result<Self, VecEyesError> {

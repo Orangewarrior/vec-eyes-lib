@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.2.2] - 2026-05-01
+
+### Changed
+
+- `GradientBoosting` now trains shallow regression trees and honors `max_depth` instead of behaving as a fixed-depth stump ensemble.
+- README examples were updated to the current nested YAML format and current Rust builder API.
+- README now documents production notes, model capability tradeoffs, and the safe regex-compatible VectorScan fallback.
+
+### Performance
+
+- KNN now caches training row norms for cosine/euclidean scoring, avoiding repeated candidate norm calculation at inference time.
+- Applied small hot-path cleanups in SVM, RandomForest, and internal embedding training loops.
+
+### Rust/API
+
+- Added compatible `Default` implementations/derives for public builders and enums where `new()` or manual defaults already existed.
+- Reduced Clippy noise for simple clamp/default patterns while preserving the public API.
+
+---
+
+## [3.2.1] - 2026-05-01
+
+### Security
+
+#### Hardened binary embedding loaders (`src/nlp/fasttext_bin.rs`, `src/nlp/word2vec_bin.rs`)
+
+- Added strict bounds for dimensions, vocabulary size, bucket count, header length, token length, and total matrix bytes.
+- Replaced trusted `rows * cols` allocation with checked multiplication before allocating embedding matrices.
+- Rejects malformed fastText/word2vec headers early instead of allowing adversarial files to trigger huge allocations or integer overflow.
+
+#### Safer model deserialization (`src/classifiers/*`, `src/advanced_models.rs`, `src/nlp/*`)
+
+- Added bounded file reads for JSON and bincode model/embedding loaders.
+- Added post-load invariants for KNN, Bayes, advanced classifiers, fastText embeddings, and word2vec embeddings.
+- Split bincode loaders now validate both NLP and ML payload sizes before deserialization.
+
+#### Stricter output path handling (`src/security.rs`, `src/config.rs`)
+
+- Report output paths now reject absolute paths and `..` components.
+- YAML-configured output paths are validated against the rules-file base directory so outputs cannot escape the expected tree.
+
+#### Thread-count limits (`src/config.rs`, `src/parallel.rs`)
+
+- `pipeline.threads` now rejects excessive values above the configured cap.
+- Rayon pool creation clamps direct thread requests to the same cap, preventing unbounded thread-pool creation from hostile configuration.
+
+### Performance
+
+#### KNN neighbor selection (`src/classifiers/knn/core.rs`)
+
+- Replaced full sorting of all candidate distances with partial selection of the nearest `k` neighbors.
+- This reduces per-classification neighbor ranking work from full `O(n log n)` sorting to selection-oriented ranking for large training sets.
+
+### Tests
+
+- Added regression coverage for excessive YAML thread counts.
+- Added regression coverage for absolute report output rejection.
+- Added regression coverage for malicious word2vec headers that should fail before matrix allocation.
+
+---
+
 ## [3.2.0] - 2026-04-28
 
 ### Changed

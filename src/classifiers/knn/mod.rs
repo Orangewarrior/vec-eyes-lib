@@ -2,24 +2,30 @@ pub(crate) mod core;
 mod distance;
 
 use crate::builders::Builder;
-use crate::classifier::{ClassificationResult, Classifier, ClassifierBuilder, ClassifierFactory, ClassifierMethod};
+use crate::classifier::{
+    ClassificationResult, Classifier, ClassifierBuilder, ClassifierFactory, ClassifierMethod,
+};
 use crate::config::ScoreSumMode;
 use crate::dataset::{load_training_samples, TrainingSample};
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::matcher::{RuleMatcher, ScoringEngine};
 use crate::nlp::{
-    dense_matrix_from_texts, fit_tfidf, DenseMatrix, FastTextEmbeddings, NlpOption,
-    TfIdfModel, WordEmbeddingModel,
+    dense_matrix_from_texts, fit_tfidf, DenseMatrix, FastTextEmbeddings, NlpOption, TfIdfModel,
+    WordEmbeddingModel,
 };
 use std::path::Path;
+
+const LOAD_CONTEXT: &str = "KnnClassifier::load_bincode";
 
 /// Entry point for KNN-based classifiers.
 pub struct KnnModule;
 
 impl KnnModule {
     #[inline]
-    pub fn builder() -> KnnBuilder { KnnBuilder::new() }
+    pub fn builder() -> KnnBuilder {
+        KnnBuilder::new()
+    }
 
     #[inline]
     pub fn cosine() -> ClassifierBuilder {
@@ -43,7 +49,7 @@ impl KnnModule {
 }
 
 pub use distance::DistanceMetric;
-pub(crate) use distance::{euclidean_distance_squared, manhattan_distance, minkowski_distance};
+pub(crate) use distance::{manhattan_distance, minkowski_distance};
 
 #[derive(Debug, Clone)]
 pub struct KnnBuilder {
@@ -80,29 +86,70 @@ impl Builder<KnnClassifier> for KnnBuilder {
         }
         if let Some(emb) = self.external_embeddings {
             return KnnClassifier::train_with_external_fasttext(
-                &self.samples, emb, self.metric, k, self.threads, self.normalize_features,
+                &self.samples,
+                emb,
+                self.metric,
+                k,
+                self.threads,
+                self.normalize_features,
             );
         }
         KnnClassifier::train(
-            &self.samples, self.nlp, self.metric, self.dims, k, self.threads,
+            &self.samples,
+            self.nlp,
+            self.metric,
+            self.dims,
+            k,
+            self.threads,
             self.normalize_features,
         )
     }
 }
 
 impl KnnBuilder {
-    pub fn new() -> Self { <Self as Builder<KnnClassifier>>::new() }
-    pub fn build(self) -> Result<KnnClassifier, VecEyesError> { <Self as Builder<KnnClassifier>>::build(self) }
+    pub fn new() -> Self {
+        <Self as Builder<KnnClassifier>>::new()
+    }
+    pub fn build(self) -> Result<KnnClassifier, VecEyesError> {
+        <Self as Builder<KnnClassifier>>::build(self)
+    }
 
-    pub fn nlp(mut self, nlp: NlpOption) -> Self { self.nlp = nlp; self }
-    pub fn samples(mut self, samples: Vec<TrainingSample>) -> Self { self.samples = samples; self }
-    pub fn k(mut self, k: usize) -> Self { self.k = Some(k); self }
-    pub fn p(mut self, p: f32) -> Self { self.p = Some(p); self }
-    pub fn threads(mut self, threads: Option<usize>) -> Self { self.threads = threads; self }
-    pub fn normalize_features(mut self, n: bool) -> Self { self.normalize_features = n; self }
-    pub fn cosine(mut self) -> Self { self.metric = DistanceMetric::Cosine; self }
-    pub fn euclidean(mut self) -> Self { self.metric = DistanceMetric::Euclidean; self }
-    pub fn manhattan(mut self) -> Self { self.metric = DistanceMetric::Manhattan; self }
+    pub fn nlp(mut self, nlp: NlpOption) -> Self {
+        self.nlp = nlp;
+        self
+    }
+    pub fn samples(mut self, samples: Vec<TrainingSample>) -> Self {
+        self.samples = samples;
+        self
+    }
+    pub fn k(mut self, k: usize) -> Self {
+        self.k = Some(k);
+        self
+    }
+    pub fn p(mut self, p: f32) -> Self {
+        self.p = Some(p);
+        self
+    }
+    pub fn threads(mut self, threads: Option<usize>) -> Self {
+        self.threads = threads;
+        self
+    }
+    pub fn normalize_features(mut self, n: bool) -> Self {
+        self.normalize_features = n;
+        self
+    }
+    pub fn cosine(mut self) -> Self {
+        self.metric = DistanceMetric::Cosine;
+        self
+    }
+    pub fn euclidean(mut self) -> Self {
+        self.metric = DistanceMetric::Euclidean;
+        self
+    }
+    pub fn manhattan(mut self) -> Self {
+        self.metric = DistanceMetric::Manhattan;
+        self
+    }
 
     pub fn minkowski(mut self, p: f32) -> Self {
         self.metric = DistanceMetric::Minkowski(p);
@@ -117,6 +164,7 @@ impl KnnBuilder {
         self
     }
 
+    #[allow(deprecated)]
     pub fn pipeline(mut self, pipeline: crate::compat::NlpPipeline) -> Self {
         self.nlp = match pipeline.representation {
             crate::compat::RepresentationKind::Count => NlpOption::Count,
@@ -132,7 +180,9 @@ impl KnnBuilder {
 
     pub fn metric(mut self, metric: DistanceMetric) -> Self {
         self.metric = metric.clone();
-        if let DistanceMetric::Minkowski(p) = metric { self.p = Some(p); }
+        if let DistanceMetric::Minkowski(p) = metric {
+            self.p = Some(p);
+        }
         self
     }
 
@@ -142,15 +192,23 @@ impl KnnBuilder {
         cold_path: Option<P>,
         hot_label: ClassificationLabel,
     ) -> Result<KnnClassifier, VecEyesError> {
-        let hot_root = hot_path.ok_or_else(|| VecEyesError::invalid_config(
-            "classifier::KnnBuilder::fit_from_directories", "hot directory is required",
-        ))?;
-        let cold_root = cold_path.ok_or_else(|| VecEyesError::invalid_config(
-            "classifier::KnnBuilder::fit_from_directories", "cold directory is required",
-        ))?;
+        let hot_root = hot_path.ok_or_else(|| {
+            VecEyesError::invalid_config(
+                "classifier::KnnBuilder::fit_from_directories",
+                "hot directory is required",
+            )
+        })?;
+        let cold_root = cold_path.ok_or_else(|| {
+            VecEyesError::invalid_config(
+                "classifier::KnnBuilder::fit_from_directories",
+                "cold directory is required",
+            )
+        })?;
         let mut samples = load_training_samples(hot_root.as_ref(), hot_label, true)?;
         samples.extend(load_training_samples(
-            cold_root.as_ref(), ClassificationLabel::BlockList, true,
+            cold_root.as_ref(),
+            ClassificationLabel::BlockList,
+            true,
         )?);
         self.samples = samples;
         self.build()
@@ -163,9 +221,15 @@ impl KnnBuilder {
 pub enum DenseFeatureModel {
     Word2Vec(WordEmbeddingModel),
     FastText(WordEmbeddingModel),
-    ExternalFastText { embeddings: FastTextEmbeddings, idf: TfIdfModel },
+    ExternalFastText {
+        embeddings: FastTextEmbeddings,
+        idf: TfIdfModel,
+    },
     /// Unified external embeddings — fastText or word2vec.
-    ExternalEmbeddings { embeddings: crate::nlp::ExternalEmbeddings, idf: TfIdfModel },
+    ExternalEmbeddings {
+        embeddings: crate::nlp::ExternalEmbeddings,
+        idf: TfIdfModel,
+    },
 }
 
 // ── Internal structs for split bincode persistence ───────────────────────────
@@ -195,6 +259,8 @@ pub struct KnnClassifier {
     threads: Option<usize>,
     labels: Vec<ClassificationLabel>,
     matrix: DenseMatrix,
+    #[serde(skip)]
+    row_norms: Option<Vec<f32>>,
     model: DenseFeatureModel,
     k: usize,
     normalize_features: bool,
@@ -202,26 +268,53 @@ pub struct KnnClassifier {
     feature_std: Option<Vec<f32>>,
 }
 
+pub(crate) struct KnnParts {
+    pub(crate) metric: DistanceMetric,
+    pub(crate) threads: Option<usize>,
+    pub(crate) labels: Vec<ClassificationLabel>,
+    pub(crate) matrix: DenseMatrix,
+    pub(crate) model: DenseFeatureModel,
+    pub(crate) k: usize,
+    pub(crate) normalize_features: bool,
+    pub(crate) feature_mean: Option<Vec<f32>>,
+    pub(crate) feature_std: Option<Vec<f32>>,
+}
+
 impl KnnClassifier {
-    pub(crate) fn from_parts(
-        metric: DistanceMetric,
-        threads: Option<usize>,
-        labels: Vec<ClassificationLabel>,
-        matrix: DenseMatrix,
-        model: DenseFeatureModel,
-        k: usize,
-        normalize_features: bool,
-        feature_mean: Option<Vec<f32>>,
-        feature_std: Option<Vec<f32>>,
-    ) -> Self {
-        Self { metric, threads, labels, matrix, model, k, normalize_features, feature_mean, feature_std }
+    pub(crate) fn from_parts(parts: KnnParts) -> Self {
+        let row_norms = precompute_row_norms(&parts.metric, &parts.matrix);
+        Self {
+            metric: parts.metric,
+            threads: parts.threads,
+            labels: parts.labels,
+            matrix: parts.matrix,
+            row_norms,
+            model: parts.model,
+            k: parts.k,
+            normalize_features: parts.normalize_features,
+            feature_mean: parts.feature_mean,
+            feature_std: parts.feature_std,
+        }
     }
 
-    pub(crate) fn metric(&self) -> &DistanceMetric { &self.metric }
-    pub(crate) fn threads(&self) -> Option<usize> { self.threads }
-    pub(crate) fn labels(&self) -> &Vec<ClassificationLabel> { &self.labels }
-    pub(crate) fn matrix(&self) -> &DenseMatrix { &self.matrix }
-    pub(crate) fn k(&self) -> usize { self.k }
+    pub(crate) fn metric(&self) -> &DistanceMetric {
+        &self.metric
+    }
+    pub(crate) fn threads(&self) -> Option<usize> {
+        self.threads
+    }
+    pub(crate) fn labels(&self) -> &Vec<ClassificationLabel> {
+        &self.labels
+    }
+    pub(crate) fn matrix(&self) -> &DenseMatrix {
+        &self.matrix
+    }
+    pub(crate) fn row_norms(&self) -> Option<&[f32]> {
+        self.row_norms.as_deref()
+    }
+    pub(crate) fn k(&self) -> usize {
+        self.k
+    }
 
     pub fn train(
         samples: &[TrainingSample],
@@ -257,7 +350,17 @@ impl KnnClassifier {
             (None, None)
         };
         let model = DenseFeatureModel::ExternalFastText { embeddings, idf };
-        Ok(Self::from_parts(metric, threads, labels, matrix, model, k, normalize_features, feature_mean, feature_std))
+        Ok(Self::from_parts(KnnParts {
+            metric,
+            threads,
+            labels,
+            matrix,
+            model,
+            k,
+            normalize_features,
+            feature_mean,
+            feature_std,
+        }))
     }
 
     /// Train a KNN classifier using a unified [`ExternalEmbeddings`] —
@@ -282,10 +385,17 @@ impl KnnClassifier {
             (None, None)
         };
         let model = DenseFeatureModel::ExternalEmbeddings { embeddings, idf };
-        Ok(Self::from_parts(
-            metric, threads, labels, matrix, model, k,
-            normalize_features, feature_mean, feature_std,
-        ))
+        Ok(Self::from_parts(KnnParts {
+            metric,
+            threads,
+            labels,
+            matrix,
+            model,
+            k,
+            normalize_features,
+            feature_mean,
+            feature_std,
+        }))
     }
 
     // ── Persistence ──────────────────────────────────────────────────────────
@@ -300,24 +410,38 @@ impl KnnClassifier {
 
     /// Load a model from a JSON file.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, VecEyesError> {
-        let json = std::fs::read_to_string(path)?;
-        serde_json::from_str(&json)
-            .map_err(|e| VecEyesError::invalid_config("KnnClassifier::load", e.to_string()))
+        let json = crate::security::read_to_string_limited(
+            path.as_ref(),
+            crate::security::DEFAULT_MAX_MODEL_BYTES,
+            "KnnClassifier::load",
+        )?;
+        let mut model: Self = serde_json::from_str(&json)
+            .map_err(|e| VecEyesError::invalid_config("KnnClassifier::load", e.to_string()))?;
+        model.refresh_cached_state();
+        model.validate_loaded("KnnClassifier::load")?;
+        Ok(model)
     }
 
     /// Save the entire model as a bincode file (fast, compact).
     pub fn save_bincode<P: AsRef<Path>>(&self, path: P) -> Result<(), VecEyesError> {
-        let bytes = bincode::serialize(self)
-            .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        let bytes =
+            bincode::serialize(self).map_err(|e| VecEyesError::Serialization(e.to_string()))?;
         std::fs::write(path, bytes)?;
         Ok(())
     }
 
     /// Load a model from a bincode file.
     pub fn load_bincode<P: AsRef<Path>>(path: P) -> Result<Self, VecEyesError> {
-        let bytes = std::fs::read(path)?;
-        bincode::deserialize(&bytes)
-            .map_err(|e| VecEyesError::Serialization(e.to_string()))
+        let bytes = crate::security::read_file_limited(
+            path.as_ref(),
+            crate::security::DEFAULT_MAX_MODEL_BYTES,
+            LOAD_CONTEXT,
+        )?;
+        let mut model: Self =
+            bincode::deserialize(&bytes).map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        model.refresh_cached_state();
+        model.validate_loaded(LOAD_CONTEXT)?;
+        Ok(model)
     }
 
     /// Save NLP pipeline and ML weights to **separate** bincode files.  Useful
@@ -341,10 +465,10 @@ impl KnnClassifier {
             k: self.k,
             normalize_features: self.normalize_features,
         };
-        let nlp_bytes = bincode::serialize(&nlp)
-            .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
-        let ml_bytes = bincode::serialize(&ml)
-            .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        let nlp_bytes =
+            bincode::serialize(&nlp).map_err(|e| VecEyesError::Serialization(e.to_string()))?;
+        let ml_bytes =
+            bincode::serialize(&ml).map_err(|e| VecEyesError::Serialization(e.to_string()))?;
         std::fs::write(nlp_path, nlp_bytes)?;
         std::fs::write(ml_path, ml_bytes)?;
         Ok(())
@@ -355,21 +479,40 @@ impl KnnClassifier {
         nlp_path: P,
         ml_path: Q,
     ) -> Result<Self, VecEyesError> {
-        let nlp: KnnNlpPart = bincode::deserialize(&std::fs::read(nlp_path)?)
+        let nlp_bytes = crate::security::read_file_limited(
+            nlp_path.as_ref(),
+            crate::security::DEFAULT_MAX_MODEL_BYTES,
+            "KnnClassifier::load_split_bincode(nlp)",
+        )?;
+        let ml_bytes = crate::security::read_file_limited(
+            ml_path.as_ref(),
+            crate::security::DEFAULT_MAX_MODEL_BYTES,
+            "KnnClassifier::load_split_bincode(ml)",
+        )?;
+        let nlp: KnnNlpPart = bincode::deserialize(&nlp_bytes)
             .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
-        let ml: KnnMlPart = bincode::deserialize(&std::fs::read(ml_path)?)
+        let ml: KnnMlPart = bincode::deserialize(&ml_bytes)
             .map_err(|e| VecEyesError::Serialization(e.to_string()))?;
-        Ok(Self::from_parts(
-            ml.metric, ml.threads, ml.labels, ml.matrix, nlp.model, ml.k,
-            ml.normalize_features, nlp.feature_mean, nlp.feature_std,
-        ))
+        let model = Self::from_parts(KnnParts {
+            metric: ml.metric,
+            threads: ml.threads,
+            labels: ml.labels,
+            matrix: ml.matrix,
+            model: nlp.model,
+            k: ml.k,
+            normalize_features: ml.normalize_features,
+            feature_mean: nlp.feature_mean,
+            feature_std: nlp.feature_std,
+        });
+        model.validate_loaded("KnnClassifier::load_split_bincode")?;
+        Ok(model)
     }
 
     pub(crate) fn matrix_for_text(&self, text: &str) -> DenseMatrix {
         let texts = [text];
         let mut m = match &self.model {
-            DenseFeatureModel::Word2Vec(inner)  => dense_matrix_from_texts(inner, &texts),
-            DenseFeatureModel::FastText(inner)  => dense_matrix_from_texts(inner, &texts),
+            DenseFeatureModel::Word2Vec(inner) => dense_matrix_from_texts(inner, &texts),
+            DenseFeatureModel::FastText(inner) => dense_matrix_from_texts(inner, &texts),
             DenseFeatureModel::ExternalFastText { embeddings, idf } => {
                 crate::nlp::fasttext_bin::embed_texts(embeddings, &texts, Some(idf))
             }
@@ -386,7 +529,9 @@ impl KnnClassifier {
     }
 
     fn apply_feature_normalization(&self, matrix: &mut DenseMatrix) {
-        if !self.normalize_features { return; }
+        if !self.normalize_features {
+            return;
+        }
         if let (Some(mean), Some(std)) = (&self.feature_mean, &self.feature_std) {
             for row in 0..matrix.shape()[0] {
                 for col in 0..matrix.shape()[1] {
@@ -394,6 +539,85 @@ impl KnnClassifier {
                 }
             }
         }
+    }
+
+    fn validate_loaded(&self, context: &str) -> Result<(), VecEyesError> {
+        if self.k == 0 {
+            return Err(VecEyesError::invalid_config(context, "k must be >= 1"));
+        }
+        if self
+            .threads
+            .is_some_and(|threads| threads > crate::security::MAX_CONFIG_THREADS)
+        {
+            return Err(VecEyesError::invalid_config(
+                context,
+                format!("threads must be <= {}", crate::security::MAX_CONFIG_THREADS),
+            ));
+        }
+        let rows = self.matrix.shape()[0];
+        let cols = self.matrix.shape()[1];
+        if rows != self.labels.len() {
+            return Err(VecEyesError::invalid_config(
+                context,
+                format!(
+                    "matrix rows ({rows}) must match labels ({})",
+                    self.labels.len()
+                ),
+            ));
+        }
+        if let Some(expected) = dense_feature_dims(&self.model) {
+            if cols != expected {
+                return Err(VecEyesError::invalid_config(
+                    context,
+                    format!("matrix columns ({cols}) must match feature dimensions ({expected})"),
+                ));
+            }
+        }
+        if let (Some(mean), Some(std)) = (&self.feature_mean, &self.feature_std) {
+            if mean.len() != cols || std.len() != cols {
+                return Err(VecEyesError::invalid_config(
+                    context,
+                    "feature normalization vectors must match matrix columns",
+                ));
+            }
+        } else if self.feature_mean.is_some() || self.feature_std.is_some() {
+            return Err(VecEyesError::invalid_config(
+                context,
+                "feature_mean and feature_std must be present together",
+            ));
+        }
+        Ok(())
+    }
+
+    fn refresh_cached_state(&mut self) {
+        self.row_norms = precompute_row_norms(&self.metric, &self.matrix);
+    }
+}
+
+impl Default for KnnBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn dense_feature_dims(model: &DenseFeatureModel) -> Option<usize> {
+    match model {
+        DenseFeatureModel::Word2Vec(inner) | DenseFeatureModel::FastText(inner) => Some(inner.dims),
+        DenseFeatureModel::ExternalFastText { embeddings, .. } => Some(embeddings.dims),
+        DenseFeatureModel::ExternalEmbeddings { embeddings, .. } => Some(embeddings.dims()),
+    }
+}
+
+fn precompute_row_norms(metric: &DistanceMetric, matrix: &DenseMatrix) -> Option<Vec<f32>> {
+    match metric {
+        DistanceMetric::Cosine | DistanceMetric::Euclidean => Some(
+            matrix
+                .rows()
+                .into_iter()
+                .map(|row| row.iter().map(|v| v * v).sum::<f32>().sqrt())
+                .collect(),
+        ),
+        DistanceMetric::Manhattan | DistanceMetric::Minkowski(_) => None,
     }
 }
 
@@ -415,10 +639,15 @@ impl Classifier for KnnClassifier {
             matchers.iter().flat_map(|m| m.find_matches(text)).collect()
         };
         labels.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        ClassificationResult { labels, extra_hits: hits }
+        ClassificationResult {
+            labels,
+            extra_hits: hits,
+        }
     }
 }
 
 impl From<KnnClassifier> for Box<dyn Classifier> {
-    fn from(value: KnnClassifier) -> Self { Box::new(value) }
+    fn from(value: KnnClassifier) -> Self {
+        Box::new(value)
+    }
 }

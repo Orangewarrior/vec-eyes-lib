@@ -18,7 +18,13 @@ pub fn normalize_text_with_options(input: &str, options: SecurityNormalizationOp
     preprocessed
         .chars()
         .flat_map(|c| c.to_lowercase())
-        .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { ' ' })
+        .map(|c| {
+            if c.is_alphanumeric() || c.is_whitespace() {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
 }
 

@@ -1,4 +1,3 @@
-
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
 use crate::security::sanitize_existing_path;
@@ -52,10 +51,18 @@ pub fn collect_files_recursively_with_limit(
     if recursive {
         let root = sanitize_existing_path(root)?;
         for entry in WalkDir::new(&root).follow_links(false) {
-            let entry = entry.map_err(|e| VecEyesError::invalid_config("dataset::collect_files_recursively_with_limit", e.to_string()))?;
+            let entry = entry.map_err(|e| {
+                VecEyesError::invalid_config(
+                    "dataset::collect_files_recursively_with_limit",
+                    e.to_string(),
+                )
+            })?;
             if entry.file_type().is_file() {
                 let metadata = entry.metadata().map_err(|e| {
-                    VecEyesError::invalid_config("dataset::collect_files_recursively_with_limit", format!("metadata read failed for {}: {}", entry.path().display(), e))
+                    VecEyesError::invalid_config(
+                        "dataset::collect_files_recursively_with_limit",
+                        format!("metadata read failed for {}: {}", entry.path().display(), e),
+                    )
                 })?;
                 if metadata.len() > max_bytes {
                     return Err(VecEyesError::invalid_config(
@@ -71,7 +78,11 @@ pub fn collect_files_recursively_with_limit(
                 if files.len() > MAX_DISCOVERED_FILES {
                     return Err(VecEyesError::invalid_config(
                         "dataset::collect_files_recursively_with_limit",
-                        format!("discovered more than {} files under {}", MAX_DISCOVERED_FILES, root.display()),
+                        format!(
+                            "discovered more than {} files under {}",
+                            MAX_DISCOVERED_FILES,
+                            root.display()
+                        ),
                     ));
                 }
             }
@@ -96,7 +107,11 @@ pub fn collect_files_recursively_with_limit(
                 if files.len() > MAX_DISCOVERED_FILES {
                     return Err(VecEyesError::invalid_config(
                         "dataset::collect_files_recursively_with_limit",
-                        format!("discovered more than {} files in {}", MAX_DISCOVERED_FILES, root.display()),
+                        format!(
+                            "discovered more than {} files in {}",
+                            MAX_DISCOVERED_FILES,
+                            root.display()
+                        ),
                     ));
                 }
             }
@@ -135,6 +150,10 @@ pub fn training_sample_iter(
     Ok(files.into_iter().map(move |file| {
         let text = read_text_file(&file)?;
         let source_name = file.to_string_lossy().to_string();
-        Ok(TrainingSample { label: label.clone(), text, source_name })
+        Ok(TrainingSample {
+            label: label.clone(),
+            text,
+            source_name,
+        })
     }))
 }

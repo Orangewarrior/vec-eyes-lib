@@ -2,8 +2,14 @@ use vec_eyes_lib::classifier::run_rules_pipeline;
 use vec_eyes_lib::config::RulesFile;
 use vec_eyes_lib::labels::ClassificationLabel;
 
-fn assert_top_label(report: &vec_eyes_lib::report::ClassificationReport, expected: ClassificationLabel) {
-    let record = report.records.first().expect("expected at least one classification record");
+fn assert_top_label(
+    report: &vec_eyes_lib::report::ClassificationReport,
+    expected: ClassificationLabel,
+) {
+    let record = report
+        .records
+        .first()
+        .expect("expected at least one classification record");
     let expected_prefix = format!("{}:", expected);
     let top = record.classify_names_list.split(',').next().unwrap_or("");
     assert!(
@@ -14,8 +20,14 @@ fn assert_top_label(report: &vec_eyes_lib::report::ClassificationReport, expecte
     );
 }
 
-fn assert_label_present(report: &vec_eyes_lib::report::ClassificationReport, expected: ClassificationLabel) {
-    let record = report.records.first().expect("expected at least one classification record");
+fn assert_label_present(
+    report: &vec_eyes_lib::report::ClassificationReport,
+    expected: ClassificationLabel,
+) {
+    let record = report
+        .records
+        .first()
+        .expect("expected at least one classification record");
     let expected_prefix = format!("{}:", expected);
     assert!(
         record.classify_names_list.contains(&expected_prefix),
@@ -26,7 +38,10 @@ fn assert_label_present(report: &vec_eyes_lib::report::ClassificationReport, exp
 }
 
 fn assert_any_rule_matched(report: &vec_eyes_lib::report::ClassificationReport) {
-    let record = report.records.first().expect("expected at least one classification record");
+    let record = report
+        .records
+        .first()
+        .expect("expected at least one classification record");
     assert!(
         !record.match_titles.trim().is_empty(),
         "expected at least one matched rule title, got '{}'",
@@ -38,7 +53,10 @@ fn assert_any_rule_matched(report: &vec_eyes_lib::report::ClassificationReport) 
 fn parses_real_yaml_file_and_validates_knn_requirements() {
     let rules = RulesFile::from_yaml_path("tests/data/rules/web_knn_fasttext_cosine.yaml").unwrap();
     assert!(rules.model.method_kind().is_knn());
-    assert!(matches!(rules.model, vec_eyes_lib::config::ModelConfig::KnnCosine { k: 3 }));
+    assert!(matches!(
+        rules.model,
+        vec_eyes_lib::config::ModelConfig::KnnCosine { k: 3 }
+    ));
     assert_eq!(rules.data.hot_label, Some(ClassificationLabel::WebAttack));
     assert_eq!(rules.data.cold_label, Some(ClassificationLabel::RawData));
     assert_eq!(rules.extra_match.len(), 1);
@@ -50,7 +68,8 @@ fn parses_real_yaml_file_and_validates_knn_requirements() {
 #[test]
 fn web_attack_knn_fasttext_pipeline_uses_real_yaml_and_recursive_training_data() {
     let rules = RulesFile::from_yaml_path("tests/data/rules/web_knn_fasttext_cosine.yaml").unwrap();
-    let report = run_rules_pipeline(&rules, std::path::Path::new("tests/data/web/classify")).unwrap();
+    let report =
+        run_rules_pipeline(&rules, std::path::Path::new("tests/data/web/classify")).unwrap();
 
     assert_eq!(report.records.len(), 1);
     assert_top_label(&report, ClassificationLabel::WebAttack);
@@ -74,7 +93,9 @@ fn biology_knn_methods_digest_yaml_files_and_classify_virus_text() {
 
     for yaml in yaml_files {
         let rules = RulesFile::from_yaml_path(yaml).unwrap();
-        let report = run_rules_pipeline(&rules, std::path::Path::new("tests/data/biology/classify")).unwrap();
+        let report =
+            run_rules_pipeline(&rules, std::path::Path::new("tests/data/biology/classify"))
+                .unwrap();
         assert_eq!(report.records.len(), 1, "expected one record for {yaml}");
         assert_top_label(&report, ClassificationLabel::Virus);
     }
@@ -89,7 +110,9 @@ fn biology_bayes_pipelines_digest_yaml_and_classify_virus_text() {
 
     for yaml in yaml_files {
         let rules = RulesFile::from_yaml_path(yaml).unwrap();
-        let report = run_rules_pipeline(&rules, std::path::Path::new("tests/data/biology/classify")).unwrap();
+        let report =
+            run_rules_pipeline(&rules, std::path::Path::new("tests/data/biology/classify"))
+                .unwrap();
         assert_eq!(report.records.len(), 1, "expected one record for {yaml}");
         assert_top_label(&report, ClassificationLabel::Virus);
     }
@@ -106,14 +129,14 @@ fn financial_fraud_knn_methods_digest_yaml_and_classify_high_risk_transaction_te
 
     for yaml in yaml_files {
         let rules = RulesFile::from_yaml_path(yaml).unwrap();
-        let report = run_rules_pipeline(&rules, std::path::Path::new("tests/data/fraud/classify")).unwrap();
+        let report =
+            run_rules_pipeline(&rules, std::path::Path::new("tests/data/fraud/classify")).unwrap();
         assert_eq!(report.records.len(), 1, "expected one record for {yaml}");
         // KNN ranking may vary slightly by distance metric, but the anomaly label must be
         // present in the final ranking for a clearly high-risk transaction sample.
         assert_label_present(&report, ClassificationLabel::Anomaly);
     }
 }
-
 
 #[test]
 fn financial_fraud_bayes_pipelines_digest_yaml_and_classify_high_risk_transaction_text() {
@@ -124,7 +147,8 @@ fn financial_fraud_bayes_pipelines_digest_yaml_and_classify_high_risk_transactio
 
     for yaml in yaml_files {
         let rules = RulesFile::from_yaml_path(yaml).unwrap();
-        let report = run_rules_pipeline(&rules, std::path::Path::new("tests/data/fraud/classify")).unwrap();
+        let report =
+            run_rules_pipeline(&rules, std::path::Path::new("tests/data/fraud/classify")).unwrap();
         assert_eq!(report.records.len(), 1, "expected one record for {yaml}");
         assert_label_present(&report, ClassificationLabel::Anomaly);
     }

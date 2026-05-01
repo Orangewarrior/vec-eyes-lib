@@ -3,10 +3,10 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 use crate::advanced_models::LabelEncoder;
-use crate::math::softmax_scores;
 use crate::dataset::TrainingSample;
 use crate::error::VecEyesError;
 use crate::labels::ClassificationLabel;
+use crate::math::softmax_scores;
 use crate::nlp::DenseMatrix;
 use crate::parallel::install_pool;
 
@@ -60,7 +60,11 @@ impl LogisticOVR {
                             let mut grad_b = 0.0f32;
 
                             for &row_idx in &indices[start..end] {
-                                let y = if y_idx[row_idx] == class_id { 1.0f32 } else { 0.0f32 };
+                                let y = if y_idx[row_idx] == class_id {
+                                    1.0f32
+                                } else {
+                                    0.0f32
+                                };
                                 let x_row = matrix.row(row_idx);
                                 // sdot: BLAS or LLVM auto-vec
                                 let z = b + w.dot(&x_row);
@@ -94,7 +98,11 @@ impl LogisticOVR {
             bias[class_id] = b;
         }
 
-        Ok(Self { weights, bias, encoder })
+        Ok(Self {
+            weights,
+            bias,
+            encoder,
+        })
     }
 
     pub(crate) fn predict_scores(&self, probe: &DenseMatrix) -> Vec<(ClassificationLabel, f32)> {
